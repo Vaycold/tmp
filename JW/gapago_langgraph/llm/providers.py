@@ -127,20 +127,61 @@ def openai_llm(messages: list[dict], model: Optional[str] = None) -> str:
         raise
 
 
-def anthropic_llm(messages: list[dict], model: Optional[str] = None) -> str:
-    """Anthropic Claude API integration."""
+def bedrock_claude_llm(messages: list[dict], model: Optional[str] = None) -> str:
+    """
+    AWS Bedrock Claude API integration.
+    
+    Based on: https://docs.anthropic.com/en/api/claude-on-amazon-bedrock
+    
+    Requires:
+        pip install boto3
+        AWS credentials configured via:
+          - aws configure (recommended)
+          - Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+          - IAM role (if running on EC2/Lambda)
+    
+    Environment Variables (optional):
+        AWS_REGION (default: us-east-1)
+        BEDROCK_CLAUDE_MODEL (default: us.anthropic.claude-3-5-sonnet-20241022-v2:0)
+    
+    Available Models (2024):
+        - us.anthropic.claude-3-5-sonnet-20241022-v2:0 (latest, recommended)
+        - us.anthropic.claude-3-5-sonnet-20240620-v1:0
+        - anthropic.claude-3-5-sonnet-20240620-v1:0
+        - anthropic.claude-3-sonnet-20240229-v1:0
+        - anthropic.claude-3-haiku-20240307-v1:0
+        - anthropic.claude-3-opus-20240229-v1:0
+    """
     try:
-        import anthropic
+        import boto3
+        import json as json_lib
     except ImportError:
-        raise ImportError("Anthropic package not installed. Run: pip install anthropic")
+        raise ImportError("Boto3 not installed. Run: pip install boto3")
     
-    if not config.ANTHROPIC_API_KEY:
-        raise ValueError("ANTHROPIC_API_KEY not found in environment variables")
+    # Get region from environment or use default
+    region = os.getenv("AWS_REGION", "us-east-1")
     
-    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
-    model = model or config.ANTHROPIC_MODEL
+    # Initialize Bedrock client
+    try:
+        bedrock_runtime = boto3.client(
+            service_name='bedrock-runtime',
+            region_name=region
+        )
+    except Exception as e:
+        raise ValueError(
+            f"Failed to initialize AWS Bedrock client: {e}\n"
+            "Please configure AWS credentials:\n"
+            "  1. Run 'aws configure' (recommended)\n"
+            "  2. Or set environment variables: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY"
+        )
     
-    # Convert messages format
+    # Model ID - 올바른 형식 사용
+    model_id = model or os.getenv(
+        "BEDROCK_CLAUDE_MODEL", 
+        "us.anthropic.claude-3-5-sonnet-20241022-v2:0"  # 🔥 수정: 최신 모델 ID
+    )
+    
+    # Convert messages format for Bedrock Claude
     system_message = None
     user_messages = []
     
@@ -153,16 +194,63 @@ def anthropic_llm(messages: list[dict], model: Optional[str] = None) -> str:
                 "content": msg["content"]
             })
     
+    # Construct Bedrock request body
+    # Reference: https://docs.anthropic.com/en/api/claude-on-amazon-bedrock
+    body = {
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": 2000,
+        "messages": user_messages,
+        "temperature": 0.7
+    }
+    
+    if system_message:
+        body["system"] = system_message
+    
     try:
-        response = client.messages.create(
-            model=model,
-            max_tokens=2000,
-            system=system_message if system_message else "You are a helpful research assistant.",
-            messages=user_messages
+        # Invoke model
+        response = bedrock_runtime.invoke_model(
+            modelId=model_id,
+            body=json_lib.dumps(body)
         )
-        return response.content[0].text
+        
+        # Parse response
+        response_body = json_lib.loads(response['body'].read())
+        
+        # Extract text from response
+        # Bedrock Claude response format:
+        # {
+        #   "id": "msg_xxx",
+        #   "type": "message",
+        #   "role": "assistant",
+        #   "content": [{"type": "text", "text": "..."}],
+        #   "model": "claude-3-5-sonnet-20241022",
+        #   "stop_reason": "end_turn",
+        #   "usage": {...}
+        # }
+        if 'content' in response_body and len(response_body['content']) > 0:
+            # content is a list of content blocks
+            text_blocks = [
+                block['text'] for block in response_body['content']
+                if block.get('type') == 'text'
+            ]
+            return ''.join(text_blocks)
+        else:
+            raise ValueError(f"Unexpected response format from Bedrock: {response_body}")
+        
     except Exception as e:
-        print(f"⚠️ Anthropic API error: {e}")
+        print(f"⚠️ AWS Bedrock Claude API error: {e}")
+        
+        # More detailed error message
+        if "ValidationException" in str(e):
+            print(f"\n💡 Tip: Make sure the model '{model_id}' is available in region '{region}'")
+            print("   Available models vary by region. Check:")
+            print("   https://docs.aws.amazon.com/bedrock/latest/userguide/model-ids.html")
+        elif "AccessDeniedException" in str(e):
+            print(f"\n💡 Tip: Request model access in AWS Console:")
+            print("   1. Go to AWS Bedrock Console")
+            print("   2. Navigate to 'Model access'")
+            print("   3. Request access to Anthropic Claude models")
+        
         raise
 
 

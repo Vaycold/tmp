@@ -20,9 +20,13 @@ class Config:
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     
-    # Anthropic
-    ANTHROPIC_API_KEY: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
-    ANTHROPIC_MODEL: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+    # AWS Bedrock Claude
+    # AWS credentials are handled by boto3 automatically
+    AWS_REGION: str = os.getenv("AWS_REGION", "us-east-1")
+    BEDROCK_CLAUDE_MODEL: str = os.getenv(
+        "BEDROCK_CLAUDE_MODEL", 
+        "us.anthropic.claude-3-5-sonnet-20241022-v2:0"  # 🔥 수정: 올바른 모델 ID
+    )
     
     # Google
     GOOGLE_API_KEY: Optional[str] = os.getenv("GOOGLE_API_KEY")

@@ -4,6 +4,7 @@ Main entry point for GAPago LangGraph.
 
 Usage:
     python main.py "Your research question"
+    python main.py  # Interactive mode
 """
 
 import sys
@@ -14,6 +15,98 @@ from pathlib import Path
 from config import config
 from models import AgentState
 from graph import build_graph
+
+
+def select_llm_provider() -> str:
+    """
+    Interactive LLM provider selection.
+    
+    Returns:
+        Selected provider name
+    """
+    providers = {
+        "1": ("mock", "Mock (No API required, for testing)"),
+        "2": ("openai", "OpenAI GPT (gpt-4o-mini)"),
+        "3": ("bedrock_claude", "AWS Bedrock Claude (Claude 3.5 Sonnet)"),
+        "4": ("gemini", "Google Gemini (gemini-2.0-flash)"),
+        "5": ("exaone", "LG Exaone (Local model)")
+    }
+    
+    print("\n" + "="*60)
+    print("🤖 Select LLM Provider")
+    print("="*60)
+    
+    for key, (provider, description) in providers.items():
+        print(f"{key}. {description}")
+    
+    while True:
+        choice = input("\nEnter your choice (1-5): ").strip()
+        
+        if choice in providers:
+            selected_provider, description = providers[choice]
+            print(f"\n✓ Selected: {description}")
+            
+            # Validate credentials
+            if not validate_provider_credentials(selected_provider):
+                print(f"\n❌ Missing credentials for {selected_provider}.")
+                print("Please set the required environment variables and try again.\n")
+                continue
+            
+            return selected_provider
+        else:
+            print("❌ Invalid choice. Please enter 1-5.")
+
+
+def validate_provider_credentials(provider: str) -> bool:
+    """
+    Validate that required credentials exist for the provider.
+    
+    Args:
+        provider: Provider name
+        
+    Returns:
+        True if credentials are valid
+    """
+    import os
+    
+    if provider == "mock":
+        return True
+    
+    elif provider == "openai":
+        if not os.getenv("OPENAI_API_KEY"):
+            print("\n⚠️ Required: OPENAI_API_KEY")
+            print("   Set it in .env file or export OPENAI_API_KEY=sk-xxxxx")
+            return False
+        return True
+    
+    elif provider == "bedrock_claude":
+        if not os.getenv("AWS_ACCESS_KEY_ID") or not os.getenv("AWS_SECRET_ACCESS_KEY"):
+            print("\n⚠️ Required: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY")
+            print("   Option 1: Run 'aws configure'")
+            print("   Option 2: Set in .env file:")
+            print("     AWS_ACCESS_KEY_ID=xxxxx")
+            print("     AWS_SECRET_ACCESS_KEY=xxxxx")
+            print("     AWS_REGION=us-east-1  # optional")
+            return False
+        return True
+    
+    elif provider == "gemini":
+        if not os.getenv("GOOGLE_API_KEY"):
+            print("\n⚠️ Required: GOOGLE_API_KEY")
+            print("   Get it from: https://makersuite.google.com/app/apikey")
+            print("   Set it in .env file or export GOOGLE_API_KEY=xxxxx")
+            return False
+        return True
+    
+    elif provider == "exaone":
+        if not os.getenv("EXAONE_MODEL_PATH"):
+            print("\n⚠️ Required: EXAONE_MODEL_PATH")
+            print("   Set it in .env file:")
+            print("     EXAONE_MODEL_PATH=LGAI-EXAONE/EXAONE-3.5-7.8B-Instruct")
+            return False
+        return True
+    
+    return True
 
 
 def format_output(state: AgentState) -> dict:
@@ -94,11 +187,23 @@ def main():
     print("🚀 GAPago LangGraph - Research Gap Analysis")
     print("="*60)
     
+    # Select LLM Provider (if not already set via environment)
+    if not config.LLM_PROVIDER or config.LLM_PROVIDER == "mock":
+        provider = select_llm_provider()
+        config.LLM_PROVIDER = provider
+    else:
+        print(f"\n🤖 Using LLM Provider: {config.LLM_PROVIDER} (from environment)")
+        if not validate_provider_credentials(config.LLM_PROVIDER):
+            print("\n❌ Missing credentials. Exiting.")
+            sys.exit(1)
+    
     # Get question
     if len(sys.argv) > 1:
         question = " ".join(sys.argv[1:])
     else:
-        print("\nEnter your research question:")
+        print("\n" + "="*60)
+        print("📝 Enter your research question:")
+        print("="*60)
         question = input("> ").strip()
         if not question:
             print("❌ No question provided. Exiting.")
@@ -147,10 +252,4 @@ def main():
     # Print results
     print_results(output)
     
-    # Save output
-    filepath = save_output(output)
-    print(f"💾 Results saved to: {filepath}\n")
-
-
-if __name__ == "__main__":
-    main()
+    # Save o

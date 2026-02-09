@@ -7,7 +7,7 @@ from config import config
 from .providers import (
     mock_llm,
     openai_llm,
-    anthropic_llm,
+    bedrock_claude_llm,
     gemini_llm,
     exaone_llm
 )
@@ -30,8 +30,8 @@ def llm_chat(messages: list[dict], model: Optional[str] = None) -> str:
         return mock_llm(messages)
     elif provider == "openai":
         return openai_llm(messages, model)
-    elif provider == "anthropic":
-        return anthropic_llm(messages, model)
+    elif provider == "bedrock_claude":  # 🔥 변경: anthropic → bedrock_claude
+        return bedrock_claude_llm(messages, model)
     elif provider == "gemini":
         return gemini_llm(messages, model)
     elif provider == "exaone":
@@ -39,5 +39,5 @@ def llm_chat(messages: list[dict], model: Optional[str] = None) -> str:
     else:
         raise ValueError(
             f"Unknown LLM_PROVIDER: {provider}. "
-            f"Choose: mock, openai, anthropic, gemini, exaone"
+            f"Choose: mock, openai, bedrock_claude, gemini, exaone"
         )
