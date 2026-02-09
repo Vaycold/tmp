@@ -1,0 +1,56 @@
+"""
+Pydantic models for GAPago LangGraph.
+"""
+
+from typing import Optional, TypedDict
+from pydantic import BaseModel, Field
+
+
+class Paper(BaseModel):
+    """Individual paper metadata from arXiv."""
+    paper_id: str
+    title: str
+    abstract: str
+    url: str
+    year: int
+    authors: list[str] = Field(default_factory=list)
+    score_bm25: float = 0.0
+
+
+class LimitationItem(BaseModel):
+    """Extracted limitation from a paper."""
+    paper_id: str
+    claim: str
+    evidence_quote: str
+
+
+class GapCandidate(BaseModel):
+    """Research gap identified from limitations."""
+    axis: str
+    gap_statement: str
+    supporting_papers: list[str] = Field(default_factory=list)
+    supporting_quotes: list[str] = Field(default_factory=list)
+
+
+class CriticScores(BaseModel):
+    """Quality scores for the analysis."""
+    query_specificity: float = Field(0.0, ge=0.0, le=1.0)
+    paper_relevance: float = Field(0.0, ge=0.0, le=1.0)
+    groundedness: float = Field(0.0, ge=0.0, le=1.0)
+
+
+class AgentState(TypedDict):
+    """LangGraph state for the pipeline."""
+    user_question: str
+    refined_query: str
+    keywords: list[str]
+    negative_keywords: list[str]
+    papers: list[Paper]
+    limitations: list[LimitationItem]
+    gaps: list[GapCandidate]
+    critic: Optional[CriticScores]
+    iteration: int
+    max_iterations: int
+    route: str
+    errors: list[str]
+    trace: dict
