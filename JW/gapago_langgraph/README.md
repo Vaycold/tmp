@@ -1,160 +1,167 @@
-## 🔧 AWS Bedrock Claude 설정
+# GAPago LangGraph (MVP) — Research Gap Analysis Pipeline
 
-### 1단계: AWS CLI 설치 및 설정
+연구 질문 1개를 입력하면 **arXiv 논문을 수집/랭킹(BM25)**하고, **Abstract 기반으로 한계점(Limitations) 추출 → GAP(Research Gap) 생성**까지 수행하는 **LangGraph 기반 MVP 파이프라인**입니다.  
+또한 **Critic 점수에 따라 refine/redo/accept 조건 분기**를 수행합니다.
+
+---
+## Quick Start
+
 ```bash
-# AWS CLI 설치
-pip install awscli
-
-# AWS 인증 설정
-aws configure
-# AWS Access Key ID: [입력]
-# AWS Secret Access Key: [입력]
-# Default region name: us-east-1
-# Default output format: json
+pip install -r requirements.txt
+export LLM_PROVIDER=mock
+python main.py "limitations of rag systems"
 ```
 
-### 2단계: Bedrock 모델 액세스 요청
+## 핵심 기능 (What it does)
 
-AWS Console에서 Claude 모델 액세스 권한을 요청해야 합니다:
+### 1) End-to-End 파이프라인
+- **User Question 입력**
+- **Query Analysis**: 검색용 쿼리(refined_query) + keywords/negative_keywords 생성
+- **Paper Retrieval**: arXiv 검색 → BM25로 Top-K 논문 선정
+- **Limitation Extraction**: 각 논문 abstract에서 한계점 claim + 근거(evidence quote) 추출
+- **GAP Inference**: 고정 K축(axis)으로 분류 후 GAP 문장 생성 + supporting evidence 포함
+- **Critic Scoring**: 품질 점수 산출(특정성/정합성/근거성)
+- **Router(조건 분기)**: 점수 기준으로 `refine_query` / `redo_retrieval` / `accept` 결정
 
-1. [AWS Bedrock Console](https://console.aws.amazon.com/bedrock/) 접속
-2. 왼쪽 메뉴에서 **"Model access"** 클릭
-3. **"Modify model access"** 버튼 클릭
-4. **Anthropic** 섹션에서 Claude 모델 체크
-   - Claude 3.5 Sonnet v2 (권장)
-   - Claude 3.5 Sonnet
-   - Claude 3 Opus
-   - Claude 3 Sonnet
-   - Claude 3 Haiku
-5. **"Save changes"** 클릭
-6. 승인까지 몇 분 소요 (보통 즉시 승인)
+### 2) LangGraph Orchestration
+`StateGraph`로 아래 노드가 순차 실행되며, critic 결과에 따라 루프를 수행합니다.
+```
+query_analysis
+ → paper_retrieval
+ → limitation_extract
+ → gap_infer
+ → critic_score
+ → router
+```
 
-### 3단계: IAM 권한 확인
+### 3) 결과 출력
+- 콘솔: 요약(Question/Query/Gaps/Quality Scores)
+- 파일: `outputs/run_YYYYMMDD_HHMMSS.json`
 
-AWS 사용자/역할에 Bedrock 권한이 있어야 합니다:
-```json
+---
+
+## 프로젝트 구조
+```
+gapago_langgraph/
+  main.py
+  config.py
+  models.py
+  graph/workflow.py
+  agents/
+    query_agent.py
+    retrieval_agent.py
+    limitation_agent.py
+    gap_agent.py
+    critic_agent.py
+  llm/
+    base.py
+    providers.py
+    utils.py
+  utils/
+    arxiv.py
+    text.py
+  requirements.txt
+```
+---
+
+## 설치
+
+```bash
+pip install -r requirements.txt
+```
+LLM Provider에 따라 추가 패키지가 필요할 수 있습니다(예: openai/anthropic/google-generativeai/transformers 등).
+
+## 실행 방법
+
+1) 기본 실행 (Mock LLM)
+
+API 없이 동작하는 더미(Mock) 모드입니다.
+
+```bash
+export LLM_PROVIDER=mock
+python main.py "limitations of rag based qa systems"
+```
+
+2) 질문 인자를 주지 않으면 입력 프롬프트로 받습니다
+```bash
+python main.py
+```
+
+LLM Provider 설정
+
+config.py는 기본적으로 환경변수로 LLM provider/model을 제어합니다.
+
+공통
+	•	LLM_PROVIDER (default: mock)
+
+OpenAI
+	•	OPENAI_API_KEY
+	•	OPENAI_MODEL (default: gpt-4o-mini)
+
+Anthropic (직접 API)
+	•	ANTHROPIC_API_KEY
+	•	ANTHROPIC_MODEL (default: claude-sonnet-4-20250514)
+
+Google Gemini
+	•	GOOGLE_API_KEY
+	•	GEMINI_MODEL (default: gemini-2.0-flash-exp)
+
+Exaone (로컬)
+	•	EXAONE_MODEL_PATH (로컬 모델 경로)
+
+주의: 현재 코드의 anthropic_llm은 Anthropic 직접 API 기반이며, AWS Bedrock Claude 호출은 별도 구현이 필요.
+
+⸻
+
+파이프라인 설정 (환경변수)
+	•	ARXIV_MAX_RESULTS (default: 50) — arXiv 후보 수
+	•	TOP_K_PAPERS (default: 10) — BM25 상위 K
+	•	MAX_ITERATIONS (default: 2) — 라우팅 루프 최대 반복
+	•	OUTPUT_DIR (default: outputs) — 결과 저장 디렉토리
+
+⸻
+
+Router(조건 분기) 기준
+
+graph/workflow.py의 route_decision()에서 아래 임계치로 분기합니다.
+	•	iteration >= max_iterations → accept (루프 종료)
+	•	critic.query_specificity < 0.55 → refine_query (쿼리 재정제)
+	•	critic.paper_relevance < 0.55 → redo_retrieval (논문 재수집/재랭킹)
+	•	critic.groundedness < 0.60 → redo_retrieval
+	•	else → accept
+
+⸻
+
+출력(JSON) 스키마 요약
+
+main.py에서 최종 state를 아래 형태로 저장합니다:
+```bash
 {
-  "Version": "2012-10-17",
-  "Statement": [
+  "question": "...",
+  "query": "...",
+  "gaps": [
     {
-      "Effect": "Allow",
-      "Action": [
-        "bedrock:InvokeModel",
-        "bedrock:InvokeModelWithResponseStream"
-      ],
-      "Resource": "arn:aws:bedrock:*::foundation-model/anthropic.claude-*"
+      "axis": "...",
+      "gap_statement": "...",
+      "supporting_papers": ["..."],
+      "supporting_quotes": ["..."]
     }
-  ]
+  ],
+  "critic": {
+    "query_specificity": 0.0,
+    "paper_relevance": 0.0,
+    "groundedness": 0.0
+  },
+  "iteration": 0,
+  "route": "accept",
+  "errors": [],
+  "trace": {}
 }
 ```
 
-### 사용 가능한 Claude 모델
+제한사항(MVP)
+	•	논문 본문(PDF) 파싱 없이 abstract 기반으로 limitation/GAP을 생성합니다.
+	•	Web Search/trend signal, VectorDB(FAISS), 본격 클러스터링(HDBSCAN) 등은 포함하지 않습니다.
+	•	LLM Provider별 JSON 파싱 실패 가능성이 있어, 안정화(재시도/복구 로직) 여지가 있습니다.
 
-#### Cross-Region 모델 (권장 ⭐)
-
-모든 리전에서 사용 가능하며 자동으로 최적의 리전으로 라우팅됩니다:
-
-| 모델 ID | 설명 | 비용 |
-|---------|------|------|
-| `us.anthropic.claude-3-5-sonnet-20241022-v2:0` | Claude 3.5 Sonnet v2 (최신) | $3/$15 per MTok |
-| `us.anthropic.claude-3-5-sonnet-20240620-v1:0` | Claude 3.5 Sonnet v1 | $3/$15 per MTok |
-
-#### On-Demand 모델 (리전별 제한)
-
-특정 리전에서만 사용 가능:
-
-| 모델 ID | 설명 | 비용 |
-|---------|------|------|
-| `anthropic.claude-3-5-sonnet-20240620-v1:0` | Claude 3.5 Sonnet | $3/$15 per MTok |
-| `anthropic.claude-3-opus-20240229-v1:0` | Claude 3 Opus | $15/$75 per MTok |
-| `anthropic.claude-3-sonnet-20240229-v1:0` | Claude 3 Sonnet | $3/$15 per MTok |
-| `anthropic.claude-3-haiku-20240307-v1:0` | Claude 3 Haiku | $0.25/$1.25 per MTok |
-
-**권장 모델**: `us.anthropic.claude-3-5-sonnet-20241022-v2:0` (Cross-region, 최신)
-
-### 사용 가능한 AWS 리전
-
-Claude 3.5 Sonnet을 사용할 수 있는 리전:
-
-- `us-east-1` (버지니아 북부) ⭐ 권장 - 모든 모델 지원
-- `us-west-2` (오레곤)
-- `ap-southeast-1` (싱가포르)
-- `ap-northeast-1` (도쿄)
-- `eu-central-1` (프랑크푸르트)
-- `eu-west-3` (파리)
-
-리전별 모델 가용성 확인:
-```bash
-aws bedrock list-foundation-models \
-  --region us-east-1 \
-  --by-provider anthropic \
-  --query 'modelSummaries[*].[modelId,modelName]' \
-  --output table
-```
-
-### 환경 설정 방법
-
-#### 방법 1: AWS CLI (권장)
-```bash
-aws configure
-```
-
-#### 방법 2: 환경변수
-```bash
-export AWS_ACCESS_KEY_ID=xxxxx
-export AWS_SECRET_ACCESS_KEY=xxxxx
-export AWS_REGION=us-east-1
-export BEDROCK_CLAUDE_MODEL=us.anthropic.claude-3-5-sonnet-20241022-v2:0
-```
-
-#### 방법 3: .env 파일
-```env
-AWS_REGION=us-east-1
-BEDROCK_CLAUDE_MODEL=us.anthropic.claude-3-5-sonnet-20241022-v2:0
-```
-
-### 테스트
-```bash
-# 설정 확인
-python -c "import boto3; print(boto3.Session().get_credentials())"
-
-# 모델 액세스 확인
-aws bedrock list-foundation-models --region us-east-1 --by-provider anthropic
-
-# 프로그램 실행
-python main.py
-# 선택: 3. AWS Bedrock Claude
-```
-
-### 문제 해결
-
-#### Error: "ValidationException"
-- 원인: 모델 ID가 잘못되었거나 해당 리전에서 사용 불가
-- 해결: 모델 ID 확인 및 리전 변경
-```bash
-  export AWS_REGION=us-east-1
-  export BEDROCK_CLAUDE_MODEL=us.anthropic.claude-3-5-sonnet-20241022-v2:0
-```
-
-#### Error: "AccessDeniedException"
-- 원인: Bedrock 모델 액세스 권한 없음
-- 해결: AWS Console → Bedrock → Model access → Request access
-
-#### Error: "ResourceNotFoundException"
-- 원인: 모델이 해당 리전에 없음
-- 해결: Cross-region 모델 사용 (`us.` 접두사)
-
-### 비용 최적화
-
-1. **Cross-region 모델 사용** (`us.` 접두사)
-   - 자동 라우팅으로 지연 시간 감소
-   - 모든 리전에서 동일한 가격
-
-2. **적절한 모델 선택**
-   - 간단한 작업: Claude 3 Haiku ($0.25/$1.25)
-   - 균형잡힌 성능: Claude 3.5 Sonnet ($3/$15) ⭐ 권장
-   - 최고 성능: Claude 3 Opus ($15/$75)
-
-3. **토큰 사용 최적화**
-   - `max_tokens` 설정 최적화
-   - 불필요한 반복 호출 최소화
+⸻
