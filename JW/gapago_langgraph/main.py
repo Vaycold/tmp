@@ -253,3 +253,5 @@ def main():
     print_results(output)
     
     # Save o
+if __name__ == "__main__":
+    main()
