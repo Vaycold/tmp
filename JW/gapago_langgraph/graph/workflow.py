@@ -1,6 +1,9 @@
 """
 LangGraph workflow construction.
 """
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from langgraph.graph import StateGraph, END
 from models import AgentState
@@ -90,26 +93,31 @@ def build_graph() -> StateGraph:
     return workflow.compile()
 def visualize_graph():
     """
-    LangGraph 워크플로우를 Mermaid 다이어그램으로 시각화
+    LangGraph 워크플로우를 Mermaid PNG 이미지로 시각화
+    저장 위치: visualizations/
     """
+
+    # 프로젝트 루트 경로 설정
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    sys.path.insert(0, project_root)
     from graph import build_graph
+    
+    # 저장 폴더 생성
+    save_dir = os.path.join(project_root, "visualizations")
+    os.makedirs(save_dir, exist_ok=True)
     
     # 그래프 빌드
     graph = build_graph()
     
-    # Mermaid 형식으로 출력
-    mermaid_code = graph.get_graph().draw_mermaid()
+    # Mermaid PNG 저장
+    png_data = graph.get_graph().draw_mermaid_png()
+    filepath = os.path.join(save_dir, "workflow_graph.png")
     
-    # 파일로 저장
-    with open("graph_visualization.mmd", "w") as f:
-        f.write(mermaid_code)
+    with open(filepath, "wb") as f:
+        f.write(png_data)
     
-    print("✅ Mermaid diagram saved to: graph_visualization.mmd")
-    print("\nMermaid Code:")
-    print("=" * 60)
-    print(mermaid_code)
-    print("=" * 60)
-    print("\nView at: https://mermaid.live/")
+    print(f"✅ Workflow graph saved to: {filepath}")
+
 
 
 if __name__ == "__main__":
