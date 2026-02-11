@@ -88,3 +88,29 @@ def build_graph() -> StateGraph:
     )
     
     return workflow.compile()
+def visualize_graph():
+    """
+    LangGraph 워크플로우를 Mermaid 다이어그램으로 시각화
+    """
+    from graph import build_graph
+    
+    # 그래프 빌드
+    graph = build_graph()
+    
+    # Mermaid 형식으로 출력
+    mermaid_code = graph.get_graph().draw_mermaid()
+    
+    # 파일로 저장
+    with open("graph_visualization.mmd", "w") as f:
+        f.write(mermaid_code)
+    
+    print("✅ Mermaid diagram saved to: graph_visualization.mmd")
+    print("\nMermaid Code:")
+    print("=" * 60)
+    print(mermaid_code)
+    print("=" * 60)
+    print("\nView at: https://mermaid.live/")
+
+
+if __name__ == "__main__":
+    visualize_graph()

@@ -1,5 +1,6 @@
 """
-LLM provider implementations.
+LLM implementations.
+- mock_llm
 """
 
 import os
@@ -10,7 +11,9 @@ from config import config
 
 
 def mock_llm(messages: list[dict]) -> str:
-    """Mock LLM for testing without API."""
+    """
+    - Mock LLM for testing without API: 미리 설정된 가짜 응답을 반환하도록 시뮬레이션
+    """
     content = messages[-1]["content"].lower()
     
     # Query refinement
