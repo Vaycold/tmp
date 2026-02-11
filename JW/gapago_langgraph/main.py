@@ -261,6 +261,8 @@ def main():
     # Print results
     print_results(output)
     
-    # Save o
+    # Save output
+    filepath = save_output(output)
+    print(f"💾 Results saved to: {filepath}")
 if __name__ == "__main__":
     main()
