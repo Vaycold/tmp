@@ -105,28 +105,36 @@ def mock_llm(messages: list[dict]) -> str:
 
 
 def openai_llm(messages: list[dict], model: Optional[str] = None) -> str:
-    """OpenAI GPT API integration."""
+    """Azure OpenAI API integration."""
     try:
-        import openai
+        from openai import AzureOpenAI
     except ImportError:
         raise ImportError("OpenAI package not installed. Run: pip install openai")
-    
-    if not config.OPENAI_API_KEY:
-        raise ValueError("OPENAI_API_KEY not found in environment variables")
-    
-    client = openai.OpenAI(api_key=config.OPENAI_API_KEY)
-    model = model or config.OPENAI_MODEL
-    
+
+    if not config.AZURE_OPENAI_API_KEY:
+        raise ValueError("AZURE_OPENAI_API_KEY not found in environment variables")
+    if not config.AZURE_OPENAI_ENDPOINT:
+        raise ValueError("AZURE_OPENAI_ENDPOINT not found in environment variables")
+
+    client = AzureOpenAI(
+        api_key=config.AZURE_OPENAI_API_KEY,
+        api_version=config.AZURE_OPENAI_API_VERSION,
+        azure_endpoint=config.AZURE_OPENAI_ENDPOINT
+    )
+
+    deployment = model or config.AZURE_OPENAI_DEPLOYMENT
+
     try:
         response = client.chat.completions.create(
-            model=model,
+            model=deployment,
             messages=messages,
-            temperature=0.7,
-            max_tokens=2000
+            max_completion_tokens=2000
         )
         return response.choices[0].message.content
     except Exception as e:
-        print(f"⚠️ OpenAI API error: {e}")
+        print(f"⚠️ Azure OpenAI API error: {e}")
+        raise
+        print(f"⚠️ Azure OpenAI API error: {e}")
         raise
 
 

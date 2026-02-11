@@ -16,9 +16,12 @@ class Config:
     # LLM Provider
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "mock")
     
-    # OpenAI
-    OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
-    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    # ── Azure OpenAI 설정 ──
+    AZURE_OPENAI_API_KEY: Optional[str] = os.getenv("AZURE_OPENAI_API_KEY")
+    AZURE_OPENAI_ENDPOINT: Optional[str] = os.getenv("AZURE_OPENAI_ENDPOINT")
+    AZURE_OPENAI_API_VERSION: str = os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+    AZURE_OPENAI_DEPLOYMENT: str = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-5.2-chat")
+
     
     # AWS Bedrock Claude
     # AWS credentials are handled by boto3 automatically

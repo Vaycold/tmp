@@ -73,9 +73,18 @@ def validate_provider_credentials(provider: str) -> bool:
         return True
     
     elif provider == "openai":
-        if not os.getenv("OPENAI_API_KEY"):
-            print("\n⚠️ Required: OPENAI_API_KEY")
-            print("   Set it in .env file or export OPENAI_API_KEY=sk-xxxxx")
+        missing = []
+        if not os.getenv("AZURE_OPENAI_API_KEY"):
+            missing.append("AZURE_OPENAI_API_KEY")
+        if not os.getenv("AZURE_OPENAI_ENDPOINT"):
+            missing.append("AZURE_OPENAI_ENDPOINT")
+        if missing:
+            print(f"\n⚠️ Required: {', '.join(missing)}")
+            print("   Set in .env file:")
+            print("     AZURE_OPENAI_API_KEY=your-api-key")
+            print("     AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/")
+            print("     AZURE_OPENAI_DEPLOYMENT=gpt-5.2-chat  # optional")
+            print("     AZURE_OPENAI_API_VERSION=2024-12-01-preview  # optional")
             return False
         return True
     
