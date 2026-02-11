@@ -1,6 +1,14 @@
 """
-LLM implementations.
-- mock_llm
+LLM implementations
+- 모든 함수는 동일한 Contract를 가짐
+    - Input : messages:(각 agent에서 정의된 프롬프트[{"role": "...", "content": "..."}])
+    - Output: 모델이 생성한 텍스트 응답(str)
+- 구현 목록:
+    - openai_llm          : GPT API (Azure OpenAI)
+    - bedrock_claude_llm  : Claude API (AWS Bedrock Claude)
+    - gemini_llm          : Gemini API
+    - exaone_llm          : LG Exaone 로컬 추론 (Transformers)
+    - mock_llm            : API 없이 파이프라인 E2E 테스트용 더미 응답 생성
 """
 
 import os
@@ -8,122 +16,24 @@ import json
 import re
 from typing import Optional
 from config import config
+from openai import AzureOpenAI
 
-
-def mock_llm(messages: list[dict]) -> str:
-    """
-    - Mock LLM for testing without API: 미리 설정된 가짜 응답을 반환하도록 시뮬레이션
-    """
-    content = messages[-1]["content"].lower()
-    
-    # Query refinement
-    if "refine" in content and "search query" in content:
-        question_match = re.search(r"research question:\s*(.+?)(?:\n|$)", content, re.IGNORECASE)
-        question = question_match.group(1).strip() if question_match else "research question"
-        
-        words = re.findall(r'\b\w{4,}\b', question.lower())
-        keywords = list(set(words[:5]))
-        
-        return json.dumps({
-            "refined_query": " ".join(keywords[:3]),
-            "keywords": keywords[:5],
-            "negative_keywords": ["review", "survey"]
-        })
-    
-    # Limitation extraction
-    elif "limitation" in content or "future work" in content:
-        abstract_match = re.search(r"abstract:\s*(.+?)(?:\n\n|$)", content, re.IGNORECASE | re.DOTALL)
-        if abstract_match:
-            abstract = abstract_match.group(1).strip()
-            sentences = re.split(r'[.!?]+', abstract)
-            sentences = [s.strip() for s in sentences if len(s.strip()) > 20]
-            
-            limitations = []
-            limit_keywords = ["however", "limitation", "future", "challenge", "difficult", "cannot", "limited"]
-            
-            for sent in sentences:
-                if any(kw in sent.lower() for kw in limit_keywords):
-                    limitations.append({
-                        "claim": f"Limitation identified: {sent[:80]}...",
-                        "evidence_quote": sent[:150]
-                    })
-                    if len(limitations) >= 2:
-                        break
-            
-            if not limitations and sentences:
-                limitations.append({
-                    "claim": f"Potential limitation: {sentences[-1][:80]}...",
-                    "evidence_quote": sentences[-1][:150]
-                })
-            
-            return json.dumps({"limitations": limitations})
-    
-    # Axis classification
-    elif "classify" in content and "axis" in content:
-        claim_lower = content.lower()
-        
-        if "data" in claim_lower or "dataset" in claim_lower:
-            axis = "data_dependency"
-        elif "robust" in claim_lower or "noise" in claim_lower:
-            axis = "robustness"
-        elif "scale" in claim_lower or "large" in claim_lower:
-            axis = "scalability"
-        elif "general" in claim_lower or "transfer" in claim_lower:
-            axis = "generalization"
-        elif "evaluat" in claim_lower or "metric" in claim_lower:
-            axis = "evaluation_gap"
-        elif "practic" in claim_lower or "deploy" in claim_lower:
-            axis = "practicality"
-        elif "interpret" in claim_lower or "explain" in claim_lower:
-            axis = "interpretability"
-        else:
-            axis = "methodology_gap"
-        
-        return json.dumps({"axis": axis})
-    
-    # GAP generation
-    elif "research gap" in content or "gap statement" in content:
-        axis_match = re.search(r"'(\w+)'", content)
-        axis = axis_match.group(1) if axis_match else "methodology_gap"
-        
-        gap_templates = {
-            "data_dependency": "Current approaches require large-scale datasets which limits applicability to low-resource scenarios.",
-            "robustness": "Existing models lack robustness to domain shifts and adversarial perturbations.",
-            "scalability": "Computational requirements prevent scaling to larger problem instances.",
-            "generalization": "Models demonstrate limited generalization across different domains and tasks.",
-            "evaluation_gap": "Evaluation metrics do not adequately capture real-world performance.",
-            "practicality": "Deployment barriers exist due to resource constraints and integration challenges.",
-            "interpretability": "Lack of interpretability hinders trust and adoption in critical applications.",
-            "methodology_gap": "Methodological limitations restrict the scope of applicable scenarios."
-        }
-        
-        return json.dumps({
-            "gap_statement": gap_templates.get(axis, "Research gap identified in this area.")
-        })
-    
-    return json.dumps({"result": "mock response"})
-
-
-def openai_llm(messages: list[dict], model: Optional[str] = None) -> str:
+def openai_llm(messages: list[dict]) -> str:
     """Azure OpenAI API integration."""
-    try:
-        from openai import AzureOpenAI
-    except ImportError:
-        raise ImportError("OpenAI package not installed. Run: pip install openai")
 
+    ## API 및 Endporint 누락 시 조기 에러 
     if not config.AZURE_OPENAI_API_KEY:
         raise ValueError("AZURE_OPENAI_API_KEY not found in environment variables")
     if not config.AZURE_OPENAI_ENDPOINT:
         raise ValueError("AZURE_OPENAI_ENDPOINT not found in environment variables")
 
+    ## 클라이언트 호출 및 답변 생성
     client = AzureOpenAI(
         api_key=config.AZURE_OPENAI_API_KEY,
         api_version=config.AZURE_OPENAI_API_VERSION,
         azure_endpoint=config.AZURE_OPENAI_ENDPOINT
     )
-
     deployment = model or config.AZURE_OPENAI_DEPLOYMENT
-
     try:
         response = client.chat.completions.create(
             model=deployment,
@@ -131,11 +41,11 @@ def openai_llm(messages: list[dict], model: Optional[str] = None) -> str:
             max_completion_tokens=2000
         )
         return response.choices[0].message.content
+        
     except Exception as e:
         print(f"⚠️ Azure OpenAI API error: {e}")
         raise
-        print(f"⚠️ Azure OpenAI API error: {e}")
-        raise
+
 
 
 def bedrock_claude_llm(messages: list[dict], model: Optional[str] = None) -> str:
@@ -377,3 +287,97 @@ def exaone_llm(messages: list[dict], model: Optional[str] = None) -> str:
     except Exception as e:
         print(f"⚠️ Exaone inference error: {e}")
         raise
+
+def mock_llm(messages: list[dict]) -> str:
+    """
+    - Mock LLM for testing without API: 미리 설정된 가짜 응답을 반환하도록 시뮬레이션
+    """
+    content = messages[-1]["content"].lower()
+    
+    # Query refinement
+    if "refine" in content and "search query" in content:
+        question_match = re.search(r"research question:\s*(.+?)(?:\n|$)", content, re.IGNORECASE)
+        question = question_match.group(1).strip() if question_match else "research question"
+        
+        words = re.findall(r'\b\w{4,}\b', question.lower())
+        keywords = list(set(words[:5]))
+        
+        return json.dumps({
+            "refined_query": " ".join(keywords[:3]),
+            "keywords": keywords[:5],
+            "negative_keywords": ["review", "survey"]
+        })
+    
+    # Limitation extraction
+    elif "limitation" in content or "future work" in content:
+        abstract_match = re.search(r"abstract:\s*(.+?)(?:\n\n|$)", content, re.IGNORECASE | re.DOTALL)
+        if abstract_match:
+            abstract = abstract_match.group(1).strip()
+            sentences = re.split(r'[.!?]+', abstract)
+            sentences = [s.strip() for s in sentences if len(s.strip()) > 20]
+            
+            limitations = []
+            limit_keywords = ["however", "limitation", "future", "challenge", "difficult", "cannot", "limited"]
+            
+            for sent in sentences:
+                if any(kw in sent.lower() for kw in limit_keywords):
+                    limitations.append({
+                        "claim": f"Limitation identified: {sent[:80]}...",
+                        "evidence_quote": sent[:150]
+                    })
+                    if len(limitations) >= 2:
+                        break
+            
+            if not limitations and sentences:
+                limitations.append({
+                    "claim": f"Potential limitation: {sentences[-1][:80]}...",
+                    "evidence_quote": sentences[-1][:150]
+                })
+            
+            return json.dumps({"limitations": limitations})
+    
+    # Axis classification
+    elif "classify" in content and "axis" in content:
+        claim_lower = content.lower()
+        
+        if "data" in claim_lower or "dataset" in claim_lower:
+            axis = "data_dependency"
+        elif "robust" in claim_lower or "noise" in claim_lower:
+            axis = "robustness"
+        elif "scale" in claim_lower or "large" in claim_lower:
+            axis = "scalability"
+        elif "general" in claim_lower or "transfer" in claim_lower:
+            axis = "generalization"
+        elif "evaluat" in claim_lower or "metric" in claim_lower:
+            axis = "evaluation_gap"
+        elif "practic" in claim_lower or "deploy" in claim_lower:
+            axis = "practicality"
+        elif "interpret" in claim_lower or "explain" in claim_lower:
+            axis = "interpretability"
+        else:
+            axis = "methodology_gap"
+        
+        return json.dumps({"axis": axis})
+    
+    # GAP generation
+    elif "research gap" in content or "gap statement" in content:
+        axis_match = re.search(r"'(\w+)'", content)
+        axis = axis_match.group(1) if axis_match else "methodology_gap"
+        
+        gap_templates = {
+            "data_dependency": "Current approaches require large-scale datasets which limits applicability to low-resource scenarios.",
+            "robustness": "Existing models lack robustness to domain shifts and adversarial perturbations.",
+            "scalability": "Computational requirements prevent scaling to larger problem instances.",
+            "generalization": "Models demonstrate limited generalization across different domains and tasks.",
+            "evaluation_gap": "Evaluation metrics do not adequately capture real-world performance.",
+            "practicality": "Deployment barriers exist due to resource constraints and integration challenges.",
+            "interpretability": "Lack of interpretability hinders trust and adoption in critical applications.",
+            "methodology_gap": "Methodological limitations restrict the scope of applicable scenarios."
+        }
+        
+        return json.dumps({
+            "gap_statement": gap_templates.get(axis, "Research gap identified in this area.")
+        })
+    
+    return json.dumps({"result": "mock response"})
+
