@@ -17,6 +17,8 @@ import re
 from typing import Optional
 from config import config
 from openai import AzureOpenAI
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 def openai_llm(messages: list[dict]) -> str:
     """Azure OpenAI API integration."""
@@ -41,11 +43,107 @@ def openai_llm(messages: list[dict]) -> str:
             max_completion_tokens=2000
         )
         return response.choices[0].message.content
-        
+
     except Exception as e:
         print(f"⚠️ Azure OpenAI API error: {e}")
         raise
 
+class ExaoneClient:
+    """Exaone 모델 관리 (로드 1회, 이후 캐싱)"""
+    
+    def __init__(self):
+        self._model = None
+        self._tokenizer = None
+    
+    def _load_model(self):
+        """모델 최초 로드"""
+        import torch
+        from transformers import AutoTokenizer, AutoModelForCausalLM
+        
+        model_path = config.EXAONE_MODEL_PATH
+        print(f"🔄 Loading Exaone model from {model_path}...")
+        
+        try:
+            self._tokenizer = AutoTokenizer.from_pretrained(model_path)
+            self._model = AutoModelForCausalLM.from_pretrained(
+                model_path,
+                torch_dtype=torch.float16,
+                device_map="auto",
+                trust_remote_code=True
+            )
+            print("✓ Exaone model loaded successfully")
+        except Exception as e:
+            self._model = None
+            self._tokenizer = None
+            print(f"❌ [모델 로드 실패] {e}")
+            raise
+    
+    def unload(self):
+        """모델 메모리 해제"""
+        import torch
+        
+        if self._model is not None:
+            del self._model
+            del self._tokenizer
+            self._model = None
+            self._tokenizer = None
+            torch.cuda.empty_cache()
+            print("✓ Exaone model unloaded")
+    
+    def chat(self, messages: list[dict]) -> str:
+        """LLM 호출"""
+        import torch
+        
+        if not config.EXAONE_MODEL_PATH:
+            raise ValueError("[설정 오류] EXAONE_MODEL_PATH가 .env에 설정되지 않았습니다.")
+        
+        # 최초 호출 시 모델 로드
+        if self._model is None:
+            self._load_model()
+        
+        # 대화 포맷 구성
+        conversation = ""
+        for msg in messages:
+            role = msg["role"]
+            content = msg["content"]
+            if role == "system":
+                conversation += f"[System]\n{content}\n\n"
+            elif role == "user":
+                conversation += f"[User]\n{content}\n\n"
+            elif role == "assistant":
+                conversation += f"[Assistant]\n{content}\n\n"
+        conversation += "[Assistant]\n"
+        
+        try:
+            inputs = self._tokenizer(conversation, return_tensors="pt").to(self._model.device)
+            
+            with torch.no_grad():
+                outputs = self._model.generate(
+                    **inputs,
+                    max_new_tokens=2000,
+                    do_sample=True,
+                    top_p=0.9,
+                    pad_token_id=self._tokenizer.eos_token_id
+                )
+            
+            response = self._tokenizer.decode(outputs[0], skip_special_tokens=True)
+            
+            if "[Assistant]" in response:
+                response = response.split("[Assistant]")[-1].strip()
+            
+            return response
+        except Exception as e:
+            print(f"❌ [추론 오류] {e}")
+            raise
+
+
+# 싱글톤 인스턴스
+_exaone_client = ExaoneClient()
+
+
+def exaone_llm(messages: list[dict]) -> str:
+    """Exaone LLM 호출 (기존 인터페이스 유지)"""
+    return _exaone_client.chat(messages)
 
 
 def bedrock_claude_llm(messages: list[dict], model: Optional[str] = None) -> str:
@@ -216,77 +314,6 @@ def gemini_llm(messages: list[dict], model: Optional[str] = None) -> str:
         raise
 
 
-# Global cache for Exaone model
-_EXAONE_MODEL = None
-_EXAONE_TOKENIZER = None
-
-
-def exaone_llm(messages: list[dict], model: Optional[str] = None) -> str:
-    """LG Exaone local model inference."""
-    try:
-        import torch
-        from transformers import AutoTokenizer, AutoModelForCausalLM
-    except ImportError:
-        raise ImportError("PyTorch or Transformers not installed. Run: pip install torch transformers")
-    
-    if not config.EXAONE_MODEL_PATH:
-        raise ValueError("EXAONE_MODEL_PATH not found in environment variables")
-    
-    global _EXAONE_MODEL, _EXAONE_TOKENIZER
-    
-    if _EXAONE_MODEL is None:
-        print(f"🔄 Loading Exaone model from {config.EXAONE_MODEL_PATH}...")
-        
-        try:
-            _EXAONE_TOKENIZER = AutoTokenizer.from_pretrained(config.EXAONE_MODEL_PATH)
-            _EXAONE_MODEL = AutoModelForCausalLM.from_pretrained(
-                config.EXAONE_MODEL_PATH,
-                torch_dtype=torch.float16,
-                device_map="auto",
-                trust_remote_code=True
-            )
-            print(f"✓ Exaone model loaded successfully")
-        except Exception as e:
-            print(f"⚠️ Failed to load Exaone model: {e}")
-            raise
-    
-    # Format conversation
-    conversation = ""
-    for msg in messages:
-        role = msg["role"]
-        content = msg["content"]
-        
-        if role == "system":
-            conversation += f"[System]\n{content}\n\n"
-        elif role == "user":
-            conversation += f"[User]\n{content}\n\n"
-        elif role == "assistant":
-            conversation += f"[Assistant]\n{content}\n\n"
-    
-    conversation += "[Assistant]\n"
-    
-    try:
-        inputs = _EXAONE_TOKENIZER(conversation, return_tensors="pt").to(_EXAONE_MODEL.device)
-        
-        with torch.no_grad():
-            outputs = _EXAONE_MODEL.generate(
-                **inputs,
-                max_new_tokens=2000,
-                temperature=0.7,
-                do_sample=True,
-                top_p=0.9,
-                pad_token_id=_EXAONE_TOKENIZER.eos_token_id
-            )
-        
-        response = _EXAONE_TOKENIZER.decode(outputs[0], skip_special_tokens=True)
-        
-        if "[Assistant]" in response:
-            response = response.split("[Assistant]")[-1].strip()
-        
-        return response
-    except Exception as e:
-        print(f"⚠️ Exaone inference error: {e}")
-        raise
 
 def mock_llm(messages: list[dict]) -> str:
     """

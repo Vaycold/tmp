@@ -35,7 +35,7 @@ def llm_chat(messages: list[dict], model: Optional[str] = None) -> str:
     elif provider == "gemini":
         return gemini_llm(messages, model)
     elif provider == "exaone":
-        return exaone_llm(messages, model)
+        return exaone_llm(messages)
     else:
         raise ValueError(
             f"Unknown LLM_PROVIDER: {provider}. "
