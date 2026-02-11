@@ -57,7 +57,7 @@ class Config:
         "interpretability",
         "methodology_gap"
     ]
-
+    # SCIENCEON_API_KEY: Optional[str] = os.getenv("SCIENCEON_API_KEY")
 
 # Singleton instance
 config = Config()

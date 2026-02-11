@@ -2,7 +2,7 @@
 Utility modules.
 """
 
-from .arxiv import search_arxiv
+from .search import search_papers
 from .text import tokenize
 
-__all__ = ["search_arxiv", "tokenize"]
+__all__ = ["search_papers", "tokenize"]

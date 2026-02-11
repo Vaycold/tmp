@@ -4,7 +4,7 @@ Paper Retrieval Agent.
 
 from rank_bm25 import BM25Okapi
 from models import AgentState
-from utils import search_arxiv, tokenize
+from utils import search_papers, tokenize
 from config import config
 
 
@@ -24,8 +24,8 @@ def paper_retrieval_node(state: AgentState) -> AgentState:
     print(f"\n📚 Paper Retrieval Node")
     
     # Search arXiv
-    papers = search_arxiv(state["refined_query"], max_results=config.ARXIV_MAX_RESULTS)
-    
+    papers = search_papers(state["refined_query"], max_results=config.ARXIV_MAX_RESULTS)
+ 
     if not papers:
         print("  ⚠️ No papers found")
         state["papers"] = []
