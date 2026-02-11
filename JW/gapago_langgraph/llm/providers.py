@@ -121,7 +121,7 @@ class ExaoneClient:
                 outputs = self._model.generate(
                     **inputs,
                     max_new_tokens=2000,
-                    do_sample=True,
+                    do_sample=False,
                     top_p=0.9,
                     pad_token_id=self._tokenizer.eos_token_id
                 )
