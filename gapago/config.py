@@ -19,7 +19,7 @@ class Config:
     # LLM Provider
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "mock")
     
-    # ── Azure OpenAI 설정 ──. setting error occurs, so api hardcoding,, NEVER USE this for MAIN!!!!!!
+    # ── Azure OpenAI 설정 ──. 
     AZURE_OPENAI_API_KEY: Optional[str] = os.getenv("AZURE_OPENAI_API_KEY")
     AZURE_OPENAI_ENDPOINT: Optional[str] = os.getenv("AZURE_OPENAI_ENDPOINT")
     AZURE_OPENAI_API_VERSION: str = os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
