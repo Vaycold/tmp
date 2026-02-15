@@ -6,9 +6,12 @@ import os
 from typing import Optional
 from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ENV_PATH = os.path.join(BASE_DIR, ".env")
 
+OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
+
+load_dotenv(ENV_PATH, override=False)
 
 class Config:
     """Global configuration."""
@@ -16,7 +19,7 @@ class Config:
     # LLM Provider
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "mock")
     
-    # ── Azure OpenAI 설정 ──
+    # ── Azure OpenAI 설정 ──. setting error occurs, so api hardcoding,, NEVER USE this for MAIN!!!!!!
     AZURE_OPENAI_API_KEY: Optional[str] = os.getenv("AZURE_OPENAI_API_KEY")
     AZURE_OPENAI_ENDPOINT: Optional[str] = os.getenv("AZURE_OPENAI_ENDPOINT")
     AZURE_OPENAI_API_VERSION: str = os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")

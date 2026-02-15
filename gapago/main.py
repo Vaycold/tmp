@@ -6,7 +6,7 @@ Usage:
     python main.py "Your research question"
     python main.py  # Interactive mode
 """
-
+import os
 import sys
 import json
 from datetime import datetime
@@ -146,10 +146,17 @@ def format_output(state: AgentState) -> dict:
 
 def save_output(output: dict) -> str:
     """Save output to JSON file."""
-    Path(config.OUTPUT_DIR).mkdir(exist_ok=True)
+    
+    base_dir = os.path.dirname(os.path.abspath(__file__))  # gapago/ 경로
+    out_dir = config.OUTPUT_DIR
+
+    if not os.path.isabs(out_dir):
+        out_dir = os.path.join(base_dir, out_dir)
+        
+    Path(out_dir).mkdir(exist_ok=True)
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filepath = Path(config.OUTPUT_DIR) / f"run_{timestamp}.json"
+    filepath = Path(out_dir) / f"run_{timestamp}.json"
     
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(output, f, indent=2, ensure_ascii=False)
