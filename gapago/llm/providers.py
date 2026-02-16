@@ -35,7 +35,7 @@ def openai_llm(messages: list[dict]) -> str:
         api_version=config.AZURE_OPENAI_API_VERSION,
         azure_endpoint=config.AZURE_OPENAI_ENDPOINT
     )
-    deployment = model or config.AZURE_OPENAI_DEPLOYMENT
+    deployment = config.AZURE_OPENAI_DEPLOYMENT
     try:
         response = client.chat.completions.create(
             model=deployment,
