@@ -31,7 +31,7 @@ def llm_chat(messages: list[dict], model: Optional[str] = None) -> str:
     if provider == "mock":
         return mock_llm(messages)
     elif provider == "openai":
-        return openai_llm(messages, model)
+        return openai_llm(messages)
     elif provider == "bedrock_claude":  # 🔥 변경: anthropic → bedrock_claude
         return bedrock_claude_llm(messages, model)
     elif provider == "gemini":
