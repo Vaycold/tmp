@@ -197,8 +197,16 @@ def _evaluate_dimension(dim: dict, gaps_text: str, user_question: str) -> tuple:
 - 7~8점: 우수 (해당 차원에서 좋은 품질)
 - 9~10점: 탁월 (해당 차원에서 매우 뛰어남)
 
+## 응답 규칙
+1. 점수를 먼저 결정하세요.
+2. reasoning에 반드시 다음 3가지를 포함하세요:
+   - [판단 근거] 왜 이 점수를 부여했는지 구체적 이유 (어떤 GAP의 어떤 부분을 보고 판단했는지)
+   - [강점] 이 차원에서 잘된 점
+   - [개선점] 이 차원에서 부족한 점과 구체적 개선 방향
+3. reasoning은 최소 100자 이상 작성하세요.
+
 반드시 아래 JSON 형식으로만 응답하세요:
-{{"score": 0, "reasoning": "평가 근거를 2~3문장으로 설명"}}"""
+{{"score": 0, "reasoning": "[판단 근거] ... [강점] ... [개선점] ..."}}"""
 
     messages = [
         {"role": "system", "content": "당신은 학술 연구 품질 평가 전문가입니다. 반드시 JSON 형식으로만 응답하세요."},
@@ -219,7 +227,7 @@ def _generate_summary(dimension_scores: list, average_score: float,
                       user_question: str, gaps_text: str) -> str:
     """종합 평가 요약 생성"""
     scores_text = "\n".join([
-        f"- {ds.label}: {ds.score}/10 ({ds.reasoning[:50]}...)"
+        f"- {ds.label}: {ds.score}/10 ({ds.reasoning}...)"
         for ds in dimension_scores
     ])
 

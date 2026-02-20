@@ -222,7 +222,7 @@ def print_results(output: dict):
         for dim in eval_data["dimensions"]:
             bar = "█" * dim["score"] + "░" * (10 - dim["score"])
             print(f"   {dim['label']:8s} [{bar}] {dim['score']}/10")
-            print(f"            {dim['reasoning'][:80]}")
+            print(f"            {dim['reasoning']}")
             print()
         print(f"   📝 종합 평가:")
         print(f"   {eval_data['summary']}")
