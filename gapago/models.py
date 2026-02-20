@@ -38,6 +38,19 @@ class CriticScores(BaseModel):
     paper_relevance: float = Field(0.0, ge=0.0, le=1.0)
     groundedness: float = Field(0.0, ge=0.0, le=1.0)
 
+class DimensionScore(BaseModel):
+    """개별 평가 차원 점수"""
+    dimension: str
+    label: str
+    score: int = Field(0, ge=0, le=10)
+    reasoning: str = ""
+
+
+class EvaluationResult(BaseModel):
+    """LLM-as-a-Judge 최종 평가 결과"""
+    dimension_scores: list[DimensionScore] = Field(default_factory=list)
+    average_score: float = Field(0.0, ge=0.0, le=10.0)
+    summary: str = ""
 
 class AgentState(TypedDict):
     """LangGraph state for the pipeline."""
@@ -49,6 +62,7 @@ class AgentState(TypedDict):
     limitations: list[LimitationItem]
     gaps: list[GapCandidate]
     critic: Optional[CriticScores]
+    evaluation: Optional[EvaluationResult]
     iteration: int
     max_iterations: int
     route: str
