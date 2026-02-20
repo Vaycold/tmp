@@ -5,6 +5,7 @@ Configuration management for GAPago LangGraph.
 import os
 from typing import Optional
 from dotenv import load_dotenv
+from utils import logging  
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
@@ -12,7 +13,8 @@ ENV_PATH = os.path.join(BASE_DIR, ".env")
 OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
 
 load_dotenv(ENV_PATH, override=False)
-
+LANGSMITH_PROJECT = "GAPAGO"                  
+logging.langsmith(LANGSMITH_PROJECT) 
 class Config:
     """Global configuration."""
     
@@ -64,3 +66,4 @@ class Config:
 
 # Singleton instance
 config = Config()
+
