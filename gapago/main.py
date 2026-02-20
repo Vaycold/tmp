@@ -26,7 +26,7 @@ def select_llm_provider() -> str:
     """
     providers = {
         "1": ("mock", "Mock (No API required, for testing)"),
-        "2": ("openai", "OpenAI GPT (gpt-4o-mini)"),
+        "2": ("openai", "OpenAI GPT (gpt-5.2-chat)"),
         "3": ("bedrock_claude", "AWS Bedrock Claude (Claude 3.5 Sonnet)"),
         "4": ("gemini", "Google Gemini (gemini-2.0-flash)"),
         "5": ("exaone", "LG Exaone (Local model)")
@@ -67,7 +67,6 @@ def validate_provider_credentials(provider: str) -> bool:
     Returns:
         True if credentials are valid
     """
-    import os
     
     if provider == "mock":
         return True
