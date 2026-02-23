@@ -1,5 +1,7 @@
 """
 Main LLM interface.
+- 각 llm 모델에 프롬프트 입력하여 메세지 출력하도록 하는 기본 함수 
+- 모델명 별로 케이스 분기
 """
 
 from typing import Optional

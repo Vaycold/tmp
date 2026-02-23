@@ -196,6 +196,7 @@ def print_results(output: dict):
     print()
 
 
+
 def main():
     """Main entry point."""
     print("\n" + "="*60)

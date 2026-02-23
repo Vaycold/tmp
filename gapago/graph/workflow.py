@@ -8,7 +8,8 @@ from agents import (
     limitation_extract_node,
     gap_infer_node,
     critic_score_node,
-    human_clarify_node
+    human_clarify_node,
+    evaluation_node
 )
 # from human_agent import human_clarify_node  # 추가
 
@@ -62,6 +63,7 @@ def build_graph() -> StateGraph:
     workflow.add_node("gap_infer", gap_infer_node)
     workflow.add_node("critic_score", critic_score_node)
 
+
     workflow.set_entry_point("query_analysis")
 
     # ✅ query_analysis 이후 조건부 라우팅
@@ -71,6 +73,7 @@ def build_graph() -> StateGraph:
         {
             "clarify": "human_clarify",
             "retrieve": "paper_retrieval",
+            
         },
     )
 
@@ -91,4 +94,5 @@ def build_graph() -> StateGraph:
         },
     )
 
+    
     return workflow.compile()
