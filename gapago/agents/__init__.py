@@ -8,7 +8,7 @@ from .limitation_agent import limitation_extract_node
 from .gap_agent import gap_infer_node
 from .critic_agent import critic_score_node
 from .human_agent import human_clarify_node
-from .evaluation_agent import evaluation_node
+
 __all__ = [
     "query_analysis_node",
     "paper_retrieval_node",
@@ -16,5 +16,4 @@ __all__ = [
     "gap_infer_node",
     "critic_score_node",
     "human_clarify_node",
-    "evaluation_node"
 ]
