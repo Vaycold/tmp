@@ -62,7 +62,6 @@ class AgentState(TypedDict):
     limitations: list[LimitationItem]
     gaps: list[GapCandidate]
     critic: Optional[CriticScores]
-    evaluation: Optional[EvaluationResult]
     iteration: int
     max_iterations: int
     route: str

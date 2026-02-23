@@ -120,22 +120,6 @@ def validate_provider_credentials(provider: str) -> bool:
 
 def format_output(state: AgentState) -> dict:
     """Format final state into output JSON."""
-    evaluation = state.get("evaluation")
-    eval_output = {}
-    if evaluation:
-        eval_output = {
-            "average_score": evaluation.average_score,
-            "summary": evaluation.summary,
-            "dimensions": [
-                {
-                    "dimension": ds.dimension,
-                    "label": ds.label,
-                    "score": ds.score,
-                    "reasoning": ds.reasoning
-                }
-                for ds in evaluation.dimension_scores
-            ]
-        }
     return {
         "question": state["user_question"],
         "query": state["refined_query"],
@@ -153,7 +137,6 @@ def format_output(state: AgentState) -> dict:
             "paper_relevance": state["critic"].paper_relevance if state["critic"] else 0.0,
             "groundedness": state["critic"].groundedness if state["critic"] else 0.0
         },
-        "evaluation": eval_output,
         "iteration": state["iteration"],
         "route": state["route"],
         "errors": state["errors"],
@@ -213,21 +196,6 @@ def print_results(output: dict):
     print(f"   Groundedness: {critic['groundedness']:.2f}")
     print()
 
-    if output.get("evaluation") and output["evaluation"].get("dimensions"):
-        eval_data = output["evaluation"]
-        print("=" * 60)
-        print("📊 최종 평가 (LLM-as-a-Judge)")
-        print("=" * 60)
-        print(f"\n   ⭐ 종합 점수: {eval_data['average_score']}/10\n")
-        for dim in eval_data["dimensions"]:
-            bar = "█" * dim["score"] + "░" * (10 - dim["score"])
-            print(f"   {dim['label']:8s} [{bar}] {dim['score']}/10")
-            print(f"            {dim['reasoning']}")
-            print()
-        print(f"   📝 종합 평가:")
-        print(f"   {eval_data['summary']}")
-        print()
-
 
 
 def main():
@@ -271,7 +239,6 @@ def main():
         limitations=[],
         gaps=[],
         critic=None,
-        evaluation=None, 
         iteration=0,
         max_iterations=config.MAX_ITERATIONS,
         route="",

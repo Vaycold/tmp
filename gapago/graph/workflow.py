@@ -62,7 +62,7 @@ def build_graph() -> StateGraph:
     workflow.add_node("limitation_extract", limitation_extract_node)
     workflow.add_node("gap_infer", gap_infer_node)
     workflow.add_node("critic_score", critic_score_node)
-    workflow.add_node("evaluation", evaluation_node)
+
 
     workflow.set_entry_point("query_analysis")
 
@@ -90,9 +90,9 @@ def build_graph() -> StateGraph:
         {
             "refine_query": "query_analysis",
             "redo_retrieval": "paper_retrieval",
-            "accept": "evaluation",
+            "accept": END,
         },
     )
-    workflow.add_edge("evaluation", END)
+
     
     return workflow.compile()
