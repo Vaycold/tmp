@@ -1,23 +1,26 @@
 """
-Paper Retrieval Agent (arXiv direct).
-- No negative_keywords usage
-- Acronym/synonym expansion
-- Retry with query relaxation when 0 papers
+Retrieval Agent (arXiv direct).
+- No domain-limited expansion map
+- LLM generates expansions and relaxed query candidates
+- Retries when 0-hit (or low-hit) using candidates
 """
 
 from __future__ import annotations
 
+import json
 import re
 import time
 import requests
 import xml.etree.ElementTree as ET
 from urllib.parse import urlencode
+from typing import Any, Dict, List, Optional, Tuple
 
 from rank_bm25 import BM25Okapi
 
 from models import AgentState, Paper
 from utils import tokenize
 from config import config
+from llm import llm_chat, parse_json
 
 
 _ARXIV_API = "http://export.arxiv.org/api/query"
@@ -28,183 +31,20 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "")).strip()
 
 
-def _quote(term: str) -> str:
+def _safe_phrase(term: str, max_words: int = 2) -> str:
+    """
+    arXiv에서 과도한 phrase quoting으로 0-hit이 쉽게 나므로,
+    3단어 이상은 앞 2단어까지만 사용.
+    """
     term = _norm(term)
     if not term:
         return ""
-    return f'"{term}"' if " " in term else term
+    words = term.split()
+    if len(words) <= 1:
+        return term
+    return f"\"{' '.join(words[:max_words])}\""
 
 
-# -----------------------------
-# 1) Acronym / synonym expansion
-# -----------------------------
-_EXPANSION_MAP = {
-    # PHM / RUL / SHM
-    "shm": ["structural health monitoring", "health monitoring"],
-    "structural health monitoring": ["SHM", "health monitoring"],
-    "rul": ["remaining useful life", "useful life prediction"],
-    "remaining useful life": ["RUL", "useful life prediction"],
-    "phm": ["prognostics and health management", "prognostics"],
-    "prognostics and health management": ["PHM", "prognostics"],
-
-    # Fault / diagnosis / prognosis
-    "fault diagnosis": ["diagnosis", "fault detection"],
-    "fault detection": ["anomaly detection", "fault diagnosis"],
-    "fault prognosis": ["prognosis", "rul prediction"],
-
-    # PINN
-    "pinn": ["physics-informed neural network", "physics informed neural network"],
-    "physics-informed neural network": ["PINN", "physics informed neural network"],
-    "physics informed neural network": ["PINN", "physics-informed neural network"],
-
-    # Common domain terms
-    "condition monitoring": ["health monitoring", "prognostics"],
-    "mechanical systems": ["rotating machinery", "mechanical engineering"],
-    "rotating machinery": ["bearings", "gearbox", "turbomachinery"],
-}
-
-
-def expand_keywords(keywords: list[str], max_terms: int = 10) -> list[str]:
-    """
-    Expand keywords with acronyms/synonyms.
-    - Keeps order preference: original terms first, then expansions.
-    - Caps final size to prevent overly strict queries.
-    """
-    base = [_norm(k) for k in (keywords or []) if _norm(k)]
-    out: list[str] = []
-    seen = set()
-
-    def add(t: str):
-        t = _norm(t)
-        if not t:
-            return
-        key = t.lower()
-        if key in seen:
-            return
-        seen.add(key)
-        out.append(t)
-
-    # add originals
-    for k in base:
-        add(k)
-
-    # add expansions
-    for k in base:
-        key = k.lower()
-        for e in _EXPANSION_MAP.get(key, []):
-            add(e)
-        # case-insensitive lookup for keys not normalized in map
-        # try a few heuristic variants
-        if key not in _EXPANSION_MAP:
-            for e in _EXPANSION_MAP.get(key.replace("-", " "), []):
-                add(e)
-
-    return out[:max_terms]
-
-
-# ------------------------------------
-# 2) Build multi-level arXiv query tries
-# ------------------------------------
-def build_arxiv_query_candidates(refined_query: str, keywords: list[str]) -> list[dict]:
-    """
-    Much more relaxed candidate queries for arXiv.
-    Strategy:
-      - OR-first (recall), minimal AND
-      - Prefer all: over ti/abs for early tries
-      - Avoid long phrase quoting
-    """
-    import re
-
-    def norm(s: str) -> str:
-        return re.sub(r"\s+", " ", (s or "")).strip()
-
-    def tokenish(s: str) -> str:
-        """avoid quoting long phrases; keep at most 2 words as phrase."""
-        s = norm(s)
-        if not s:
-            return ""
-        words = s.split()
-        if len(words) <= 2:
-            # keep phrase quoting only for <=2 words
-            return f'"{s}"' if len(words) == 2 else s
-        # for long phrase, take first 2 words to avoid over-restriction
-        return f'"{" ".join(words[:2])}"'
-
-    rq = norm(refined_query)
-    exp = expand_keywords(keywords, max_terms=12)
-
-    # define core intent terms (PINN/SHM/RUL/PHM/fault...) via expanded list
-    # pick top few, but DON'T force AND between them
-    core = [e for e in exp[:8] if e]
-
-    # also use a shortened refined query
-    rq_short = " ".join(rq.split()[:4]) if rq else ""
-
-    def allf(t: str) -> str:
-        return f"all:{tokenish(t)}" if t else ""
-
-    def tiabs(t: str) -> str:
-        # use ti/abs only in later "precision" attempts
-        return f"(ti:{tokenish(t)} OR abs:{tokenish(t)})" if t else ""
-
-    # OR groups
-    core_all_or = " OR ".join([allf(t) for t in core if t])
-    core_tiabs_or = " OR ".join([tiabs(t) for t in core if t])
-
-    candidates: list[dict] = []
-
-    # L1: broad recall — (all:core OR ...) AND all:rq_short (optional)
-    q1 = f"({core_all_or})" if core_all_or else ""
-    if rq_short:
-        q1 = f"{q1} AND {allf(rq_short)}" if q1 else allf(rq_short)
-    candidates.append({"level": 1, "search_query": q1 or 'all:"research"', "desc": "broad all: OR + optional all:rq_short"})
-
-    # L2: even broader — all:rq_short only
-    q2 = allf(rq_short) if rq_short else ""
-    candidates.append({"level": 2, "search_query": q2 or 'all:"research"', "desc": "all:rq_short only"})
-
-    # L3: core OR only (all:)
-    q3 = f"({core_all_or})" if core_all_or else 'all:"research"'
-    candidates.append({"level": 3, "search_query": q3, "desc": "all: core OR only"})
-
-    # L4: mild precision — (ti/abs core OR ...) AND all:rq_short
-    q4 = f"({core_tiabs_or})" if core_tiabs_or else ""
-    if rq_short:
-        q4 = f"{q4} AND {allf(rq_short)}" if q4 else allf(rq_short)
-    candidates.append({"level": 4, "search_query": q4 or (allf(rq_short) if rq_short else 'all:"research"'),
-                       "desc": "ti/abs core OR + optional all:rq_short"})
-
-    # L5: last-resort single-term fallbacks (very broad)
-    # if you have PINN-ish terms, fall back to them
-    fallback_terms = []
-    for t in exp:
-        tl = t.lower()
-        if "physics" in tl or "pinn" in tl:
-            fallback_terms.append(t)
-        if len(fallback_terms) >= 2:
-            break
-
-    if fallback_terms:
-        q5 = " OR ".join([allf(t) for t in fallback_terms])
-        candidates.append({"level": 5, "search_query": q5, "desc": "fallback physics/pinn OR"})
-    else:
-        candidates.append({"level": 5, "search_query": 'all:"physics-informed" OR all:"PINN"', "desc": "fallback hardcoded"})
-
-    # de-dup
-    seen = set()
-    uniq = []
-    for c in candidates:
-        sq = c["search_query"]
-        if not sq or sq in seen:
-            continue
-        seen.add(sq)
-        uniq.append(c)
-    return uniq
-
-
-# -----------------------------
-# 3) arXiv API fetch + parse
-# -----------------------------
 def _arxiv_url(search_query: str, start: int, max_results: int,
                sortBy: str = "relevance", sortOrder: str = "descending") -> str:
     params = {
@@ -217,11 +57,11 @@ def _arxiv_url(search_query: str, start: int, max_results: int,
     return f"{_ARXIV_API}?{urlencode(params)}"
 
 
-def _parse_atom(xml_text: str) -> list[Paper]:
+def _parse_atom(xml_text: str) -> List[Paper]:
     root = ET.fromstring(xml_text)
     entries = root.findall("atom:entry", _ATOM_NS)
 
-    out: list[Paper] = []
+    out: List[Paper] = []
     for e in entries:
         arxiv_id_url = (e.findtext("atom:id", default="", namespaces=_ATOM_NS) or "").strip()
         arxiv_id = arxiv_id_url.replace("http://arxiv.org/abs/", "").replace("https://arxiv.org/abs/", "").strip()
@@ -256,19 +96,18 @@ def _parse_atom(xml_text: str) -> list[Paper]:
             year=year,
             authors=authors
         ))
-
     return out
 
 
-def _fetch_arxiv(search_query: str, max_total: int, page_size: int, max_pages: int, errors: list[str]) -> list[Paper]:
-    raw: list[Paper] = []
-
+def _fetch_arxiv(search_query: str, max_total: int, page_size: int, max_pages: int,
+                errors: List[str]) -> List[Paper]:
+    raw: List[Paper] = []
     for page in range(max_pages):
         start = page * page_size
         if start >= max_total:
             break
-        url = _arxiv_url(search_query=search_query, start=start, max_results=min(page_size, max_total - start))
 
+        url = _arxiv_url(search_query=search_query, start=start, max_results=min(page_size, max_total - start))
         try:
             r = requests.get(url, timeout=30)
             r.raise_for_status()
@@ -282,16 +121,11 @@ def _fetch_arxiv(search_query: str, max_total: int, page_size: int, max_pages: i
             break
 
     # dedup by paper_id
-    uniq = {}
-    for p in raw:
-        uniq[p.paper_id] = p
+    uniq = {p.paper_id: p for p in raw}
     return list(uniq.values())
 
 
-# -----------------------------
-# 4) BM25 selection
-# -----------------------------
-def _bm25_select(papers: list[Paper], query_text: str, top_k: int) -> tuple[list[Paper], float]:
+def _bm25_select(papers: List[Paper], query_text: str, top_k: int) -> Tuple[List[Paper], float]:
     if not papers:
         return [], 0.0
     corpus = [tokenize(p.abstract) for p in papers]
@@ -307,28 +141,98 @@ def _bm25_select(papers: list[Paper], query_text: str, top_k: int) -> tuple[list
     return selected, avg
 
 
-# -----------------------------
-# Main node
-# -----------------------------
+def _llm_expand_and_build_candidates(
+    refined_query: str,
+    keywords: List[str],
+    trace_memory: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    LLM이 약어/동의어/관련 키워드 확장 및 arXiv 검색 후보 쿼리(완화 단계)를 생성.
+    하드코딩 사전 없음.
+    """
+    rq = _norm(refined_query)
+    kws = [_norm(k) for k in (keywords or []) if _norm(k)]
+    mem = trace_memory or {}
+
+    prompt = f"""You are an information retrieval engineer for arXiv.
+
+INPUT:
+- refined_query: {rq}
+- keywords: {kws}
+- user_memory (optional): {json.dumps(mem, ensure_ascii=False)[:1500]}
+
+GOAL:
+1) Expand terms with acronyms/synonyms/related terms (domain-agnostic).
+2) Produce relaxed arXiv search_query candidates (from broad->narrow).
+   - Prefer OR to preserve recall.
+   - Avoid long quoted phrases (<=2 words per quote).
+   - Use all: predominantly; ti:/abs: only in later candidates.
+3) Provide a BM25 query text (plain) for ranking.
+
+OUTPUT JSON ONLY with keys:
+{{
+  "expanded_terms": ["<=12 terms, include acronyms"],
+  "bm25_query_text": "plain text for BM25",
+  "candidates": [
+    {{"level": 1, "search_query": "arXiv search_query", "desc": "broadest"}},
+    ...
+  ]
+}}
+"""
+
+    messages = [
+        {"role": "system", "content": "You generate robust arXiv search queries with high recall."},
+        {"role": "user", "content": prompt},
+    ]
+    resp = llm_chat(messages)
+    data = parse_json(resp)
+
+    # defensive normalization
+    expanded = data.get("expanded_terms", []) or []
+    expanded = [_norm(x) for x in expanded if isinstance(x, str) and _norm(x)]
+    expanded = expanded[:12]
+
+    bm25_text = _norm(data.get("bm25_query_text", "")) or _norm(" ".join([rq] + expanded[:6]))
+
+    candidates = data.get("candidates", []) or []
+    cleaned = []
+    for c in candidates:
+        if not isinstance(c, dict):
+            continue
+        lvl = c.get("level")
+        sq = _norm(c.get("search_query", ""))
+        desc = _norm(c.get("desc", ""))
+        if sq:
+            cleaned.append({"level": lvl, "search_query": sq, "desc": desc})
+
+    # fallback if LLM returns empty
+    if not cleaned:
+        # very broad fallback, OR-first
+        core = expanded[:6] if expanded else [rq] if rq else ["research"]
+        or_group = " OR ".join([f'all:{_safe_phrase(t)}' for t in core if _safe_phrase(t)])
+        cleaned = [
+            {"level": 1, "search_query": f"({or_group})" if or_group else 'all:"research"', "desc": "fallback broad OR"},
+            {"level": 2, "search_query": f'all:{_safe_phrase(rq)}' if rq else 'all:"research"', "desc": "fallback all:rq"},
+        ]
+
+    return {"expanded_terms": expanded, "bm25_query_text": bm25_text, "candidates": cleaned}
+
+
 def paper_retrieval_node(state: AgentState) -> AgentState:
     """
-    arXiv direct retrieval with retry & expansion.
-    - Does NOT use negative_keywords
-    - Retries with relaxed queries if 0 hits
+    arXiv retrieval with:
+    - LLM-based expansion & candidate generation (no hardcoded map)
+    - retry when 0-hit (or too few hits)
     """
-    if state["iteration"] > 0:
+    if state.get("iteration", 0) > 0:
         print(f"\n🔄 Re-running Retrieval (iteration {state['iteration']})")
-    print(f"\n📚 Paper Retrieval Node (arXiv direct)")
+    print("\n📚 Paper Retrieval Node (arXiv direct)")
 
     if "trace" not in state or state["trace"] is None:
         state["trace"] = {}
     if "errors" not in state or state["errors"] is None:
         state["errors"] = []
 
-    refined_query = state.get("refined_query", "")
-    keywords = state.get("keywords", [])
-
-    # trace init
     state["trace"].setdefault("retrieval", {})
     state["trace"]["retrieval"]["arxiv"] = {
         "tries": [],
@@ -337,65 +241,81 @@ def paper_retrieval_node(state: AgentState) -> AgentState:
         "raw_count": 0,
         "selected_count": 0,
         "avg_bm25": 0.0,
-        "expanded_keywords": expand_keywords(keywords, max_terms=10),
+        "expanded_terms": [],
+        "bm25_query_text": "",
     }
 
-    # pagination params
-    max_total = int(getattr(config, "ARXIV_MAX_RESULTS", 60))
-    page_size = int(getattr(config, "ARXIV_PAGE_SIZE", 30))
+    refined_query = state.get("refined_query", "")
+    keywords = state.get("keywords", [])
+
+    # LLM expansion + candidates
+    mem = (state.get("trace", {}).get("memory", {}) or {})
+    try:
+        pack = _llm_expand_and_build_candidates(refined_query, keywords, trace_memory=mem)
+    except Exception as e:
+        state["errors"].append(f"[arXiv] LLM expansion failed: {e}")
+        pack = {"expanded_terms": [], "bm25_query_text": _norm(refined_query), "candidates": []}
+
+    state["trace"]["retrieval"]["arxiv"]["expanded_terms"] = pack.get("expanded_terms", [])
+    state["trace"]["retrieval"]["arxiv"]["bm25_query_text"] = pack.get("bm25_query_text", "")
+
+    candidates = pack.get("candidates", []) or []
+    if not candidates:
+        candidates = [{"level": 1, "search_query": 'all:"research"', "desc": "fallback"}]
+
+    # pagination parameters
+    max_total = int(getattr(config, "ARXIV_MAX_RESULTS", 80))
+    page_size = int(getattr(config, "ARXIV_PAGE_SIZE", 40))
     max_pages = int(getattr(config, "ARXIV_MAX_PAGES", 3))
 
-    # BM25 query text: refined_query + expanded keywords 일부
-    exp_kws = state["trace"]["retrieval"]["arxiv"]["expanded_keywords"]
-    bm25_query_text = _norm(" ".join([refined_query] + exp_kws[:6]))
+    # retry condition: 0-hit or too-few hit
+    min_raw_required = int(getattr(config, "ARXIV_MIN_RAW", 8))
 
-    # 1) 후보 쿼리 생성 (strict -> relaxed)
-    candidates = build_arxiv_query_candidates(refined_query, exp_kws)
-
-    # 2) 0이면 재시도
-    raw: list[Paper] = []
+    raw_best: List[Paper] = []
     used = None
 
     for cand in candidates:
-        level = cand["level"]
-        sq = cand["search_query"]
-        desc = cand["desc"]
+        lvl = cand.get("level")
+        sq = cand.get("search_query", "")
+        desc = cand.get("desc", "")
 
         raw = _fetch_arxiv(sq, max_total=max_total, page_size=page_size, max_pages=max_pages, errors=state["errors"])
 
         state["trace"]["retrieval"]["arxiv"]["tries"].append({
-            "level": level,
+            "level": lvl,
             "desc": desc,
             "search_query": sq,
             "raw_count": len(raw),
         })
 
-        if raw:
+        # keep best for fallback
+        if len(raw) > len(raw_best):
+            raw_best = raw
             used = cand
+
+        if len(raw) >= min_raw_required:
+            used = cand
+            raw_best = raw
             break
 
-    # 기록
+    # finalize used query
     if used:
-        state["trace"]["retrieval"]["arxiv"]["used_level"] = used["level"]
-        state["trace"]["retrieval"]["arxiv"]["used_search_query"] = used["search_query"]
-    else:
-        state["trace"]["retrieval"]["arxiv"]["used_level"] = None
-        state["trace"]["retrieval"]["arxiv"]["used_search_query"] = None
+        state["trace"]["retrieval"]["arxiv"]["used_level"] = used.get("level")
+        state["trace"]["retrieval"]["arxiv"]["used_search_query"] = used.get("search_query")
 
-    state["trace"]["retrieval"]["arxiv"]["raw_count"] = len(raw)
+    state["trace"]["retrieval"]["arxiv"]["raw_count"] = len(raw_best)
 
-    if not raw:
+    if not raw_best:
         print("  ⚠️ No papers found after retries")
         state["papers"] = []
         state["trace"]["papers_retrieved"] = 0
         state["trace"]["avg_bm25"] = 0.0
         return state
 
-    print(f"  ✓ Retrieved {len(raw)} papers (after retry)")
-
-    # 3) 평가 기반 선별(BM25)
+    # BM25 selection
+    bm25_query_text = state["trace"]["retrieval"]["arxiv"]["bm25_query_text"] or _norm(refined_query)
     top_k = int(getattr(config, "TOP_K_PAPERS", 10))
-    selected, avg_bm25 = _bm25_select(raw, query_text=bm25_query_text or _norm(refined_query), top_k=top_k)
+    selected, avg_bm25 = _bm25_select(raw_best, query_text=bm25_query_text, top_k=top_k)
 
     state["papers"] = selected
     state["trace"]["papers_retrieved"] = len(selected)
@@ -404,5 +324,5 @@ def paper_retrieval_node(state: AgentState) -> AgentState:
     state["trace"]["retrieval"]["arxiv"]["selected_count"] = len(selected)
     state["trace"]["retrieval"]["arxiv"]["avg_bm25"] = avg_bm25
 
-    print(f"  ✓ Selected top {len(selected)} by BM25 | avg_bm25={avg_bm25:.2f}")
+    print(f"  ✓ raw={len(raw_best)} selected={len(selected)} avg_bm25={avg_bm25:.2f}")
     return state
