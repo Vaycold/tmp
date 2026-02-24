@@ -3,6 +3,7 @@
 from langgraph.graph import StateGraph, END
 from models import AgentState
 from agents import (
+    ambiguity_check_node,
     query_analysis_node,
     paper_retrieval_node,
     limitation_extract_node,
@@ -12,6 +13,14 @@ from agents import (
 )
 # from human_agent import human_clarify_node  # 추가
 
+
+def route_after_ambiguity(state : AgentState) -> str : 
+    """
+    [NEW] ambiguity_check 이후 라우팅.
+      - route == "ambiguous" → human_clarify  (질문 보완 요청)
+      - route == "clear"     → query_analysis (쿼리 생성 진행)
+    """
+    return "clarify" if state.get("route") == "ambiguous" else "query_analysis"
 
 def route_after_query(state: AgentState) -> str:
     """query_analysis 이후 라우팅."""
@@ -52,33 +61,50 @@ def route_decision(state: AgentState) -> str:
     return "accept"
 
 
-def build_graph() -> StateGraph:
+def build_graph(interrupt_before=None) -> StateGraph:
     workflow = StateGraph(AgentState)
 
+    workflow.add_node("ambiguity_check", ambiguity_check_node)   # ← NEW
     workflow.add_node("query_analysis", query_analysis_node)
-    workflow.add_node("human_clarify", human_clarify_node)  # 추가
+    workflow.add_node("human_clarify", human_clarify_node)
     workflow.add_node("paper_retrieval", paper_retrieval_node)
     workflow.add_node("limitation_extract", limitation_extract_node)
     workflow.add_node("gap_infer", gap_infer_node)
     workflow.add_node("critic_score", critic_score_node)
+    
 
-
-    workflow.set_entry_point("query_analysis")
-
-    # ✅ query_analysis 이후 조건부 라우팅
+    
+    workflow.set_entry_point("ambiguity_check")                  # 진입점
+    
     workflow.add_conditional_edges(
-        "query_analysis",
-        route_after_query,
+        "ambiguity_check",
+        route_after_ambiguity,
         {
             "clarify": "human_clarify",
-            "retrieve": "paper_retrieval",
-            
+            "query_analysis": "query_analysis",
         },
     )
+    '''
+    clarify -> query_analysis # 모호할 경우 -> HIL
+    query_analysis -> query_analysis # 확실할 경우 -> query_analysis로 가기
+    '''
+    
+    
+    # ── human_clarify → ambiguity_check 복귀 (답변 후 재검증) ────
+    workflow.add_edge("human_clarify", "ambiguity_check")        # ← 기존 query_analysis → 변경
 
-    # ✅ human_clarify는 다시 query_analysis로 복귀
-    workflow.add_edge("human_clarify", "query_analysis")
-
+    # # ✅ query_analysis 이후 조건부 라우팅
+    # workflow.add_conditional_edges(
+    #     "query_analysis",
+    #     route_after_query,
+    #     {
+    #         "clarify": "human_clarify",
+    #         "retrieve": "paper_retrieval",
+            
+    #     },
+    # )
+    
+    workflow.add_edge("query_analysis", "paper_retrieval")
     workflow.add_edge("paper_retrieval", "limitation_extract")
     workflow.add_edge("limitation_extract", "gap_infer")
     workflow.add_edge("gap_infer", "critic_score")
@@ -94,4 +120,12 @@ def build_graph() -> StateGraph:
     )
 
     
-    return workflow.compile()
+        # ── compile: interrupt_before 버전 호환 처리 ──────────────────
+    # LangGraph 0.1.x: compile()에 interrupt_before 미지원 → checkpoint 필요
+    # LangGraph 0.2+:  compile(interrupt_before=[...]) 직접 지원
+    _interrupt = interrupt_before or []
+    try:
+        return workflow.compile(interrupt_before=_interrupt)
+    except TypeError:
+        # 구버전 fallback: interrupt 없이 컴파일 (main.py의 루프로 대응)
+        return workflow.compile()

@@ -246,13 +246,70 @@ def main():
     )
     
     # Build and run graph
+    # ─────────────────────────────────────────────────────────────────────
+    # [핵심] interrupt_before=["human_clarify"] 설정:
+    #   LangGraph는 human_clarify 노드 직전에 그래프를 일시정지(interrupt)한다.
+    #   graph.invoke() 대신 graph.stream()으로 상태를 받아,
+    #   interrupt가 발생하면 사용자 입력을 받고 graph.invoke(None, ...)로 재개한다.
+    # ─────────────────────────────────────────────────────────────────────
     try:
-        graph = build_graph()
-        final_state = graph.invoke(
-            initial_state,
-            config={"recursion_limit": 50}
-        )
-        
+        try:
+            graph = build_graph(interrupt_before=["human_clarify"])
+        except TypeError:
+            # 구버전 LangGraph fallback
+            graph = build_graph()
+        run_cfg = {"recursion_limit": 50}
+        current_input = initial_state
+        final_state = None
+
+        while True:
+            # 그래프 실행 (처음이면 initial_state, 이후엔 None → 재개)
+            result = graph.invoke(current_input, config=run_cfg)
+            final_state = result
+
+            # interrupt 여부 확인: route == "ambiguous" or "clarify" 이고
+            # human_clarify가 아직 실행되지 않은 경우 → 사용자 입력 수집
+            route = result.get("route", "")
+            if route in ("ambiguous", "clarify"):
+                # human_clarify 노드 로직을 인라인으로 실행
+                print("\n🧾 Human Clarification")
+                questions = result.get("trace", {}).get("clarify_questions", [])
+                if questions:
+                    print("\n[보완이 필요한 항목]")
+                    for i, q in enumerate(questions, 1):
+                        print(f"  {i}. {q}")
+                    questions_summary = " / ".join(questions[:3])
+                else:
+                    print("  추가 정보가 필요합니다. 연구 범위/도메인/방법을 구체화해 주세요.")
+                    questions_summary = "generic_clarification"
+
+                answer = input("\n추가 정보를 입력하세요 (없으면 Enter): ").strip()
+
+                # trace memory에 답변 저장
+                trace = result.get("trace", {}) or {}
+                mem = trace.get("memory", {}) or {}
+                clarifs = mem.get("clarifications", []) or []
+                clarifs.append({
+                    "iteration": result.get("iteration", 0),
+                    "questions_summary": questions_summary,
+                    "answer": answer,
+                })
+                mem["clarifications"] = clarifs
+                trace["memory"] = mem
+                trace["clarify_questions"] = []
+                trace["clarify_needed"] = False
+
+                # 답변을 반영한 state로 재시작 (user_question에 답변 추가)
+                updated_question = result["user_question"]
+                if answer:
+                    updated_question = f"{result['user_question']} [추가정보: {answer}]"
+
+                current_input = {**result, "user_question": updated_question,
+                                 "route": "", "trace": trace}
+            else:
+                # 정상 종료
+                break
+
     except KeyboardInterrupt:
         print("\n\n⚠️ Interrupted by user")
         sys.exit(1)
