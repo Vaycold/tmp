@@ -52,7 +52,7 @@ def query_analysis_node(state: AgentState) -> AgentState:
         "groundedness": getattr(critic, "groundedness", None) if critic else None,
     }
 
-    prompt = f"""You are a research query optimizer for arXiv.
+    prompt = f"""You are a research query optimizer for academic paper search (source-agnostic).
 
 Research Question:
 {state['user_question']}
@@ -68,22 +68,23 @@ Last critic signals:
 {critic_scores}
 
 TASK:
-1) Generate an optimized query for arXiv retrieval.
+1) Generate a source-agnostic keyword lists for retrieval agent.
+   - Do NOT include database-specific syntax (no ti:, abs:, ANDNOT, site:, etc.)
 2) Decide if clarification is needed to improve retrieval quality.
 
 Output JSON only with EXACT keys:
 {{
-  "refined_query": "Concise search string (5-12 words, English)",
-  "keywords": ["4-8 important terms/phrases, English"],
+  "refined_query": "Concise search string (6-12 words, English)",
+  "keywords": ["3-6 important terms/phrases, English"],
   "negative_keywords": ["0-4 terms to exclude, English"],
   "needs_clarification": true/false,
-  "clarifying_questions": ["3-5 questions if needs_clarification is true, else []"],
+  "clarifying_questions": ["2-3 questions if needs_clarification is true, else []"],
   "reason": "short reason"
 }}
 """
 
     messages = [
-        {"role": "system", "content": "You optimize academic search queries and ask clarifying questions when needed."},
+        {"role": "system", "content": "You optimize academic search intent and ask clarifying questions when needed."},
         {"role": "user", "content": prompt}
     ]
 
@@ -109,7 +110,7 @@ Output JSON only with EXACT keys:
         print(f"  ✓ Keywords: {', '.join(state['keywords'])}")
 
         if needs:
-            # 그래프 종료가 아니라, workflow에서 Human 노드로 라우팅하기 위한 신호
+            # human_agent.py가 이 trace를 읽어서 질문을 출력하고 메모리에 누적 :contentReference[oaicite:6]{index=6}
             state["route"] = "clarify"
             print("  ⚠️ Clarification required. Routing to HumanClarify node.")
 
