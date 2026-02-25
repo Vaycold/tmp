@@ -1,7 +1,7 @@
 """
 LangGraph agent nodes.
 """
-
+from .ambiguity_agent import ambiguity_check_node
 from .query_agent import query_analysis_node
 # from .retrieval_agent import paper_retrieval_node
 from .limitation_agent import limitation_extract_node
@@ -11,6 +11,7 @@ from .human_agent import human_clarify_node
 from .retrieval_agent_arxiv import paper_retrieval_node
 
 __all__ = [
+    "ambiguity_check_node",               # ← NEW
     "query_analysis_node",
     "paper_retrieval_node",
     "limitation_extract_node",
