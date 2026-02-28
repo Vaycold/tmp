@@ -52,16 +52,47 @@ class Config:
     OUTPUT_DIR: str = os.getenv("OUTPUT_DIR", "outputs")
     
     # GAP Axes
-    GAP_AXES: list[str] = [
-        "data_dependency",
-        "robustness",
-        "scalability",
-        "generalization",
-        "evaluation_gap",
-        "practicality",
-        "interpretability",
-        "methodology_gap"
-    ]
+    # GAP_AXES: list[str] = [
+    #     "data_dependency",
+    #     "robustness",
+    #     "scalability",
+    #     "generalization",
+    #     "evaluation_gap",
+    #     "practicality",
+    #     "interpretability",
+    #     "methodology_gap"
+    # ]
+
+    # ── GAP 분석 고정 축 (5개) ──────────────────────────────────
+    # 모든 연구 분야에 공통 적용되는 보편적 한계 기준
+    # 동적 축은 gap_agent.py 내에서 LLM이 추가로 생성
+    GAP_AXES_FIXED: dict = {
+        "methodology": {
+            "label": "방법론적 한계",
+            "description": "연구에서 사용한 알고리즘, 모델 구조, 실험 설계 자체의 제약"
+        },
+        "data": {
+            "label": "데이터 한계",
+            "description": "데이터 부족, 편향, 특정 데이터셋 의존, 데이터 품질 문제"
+        },
+        "evaluation": {
+            "label": "검증/평가 한계",
+            "description": "실험 범위 협소, 평가 지표 부적절, 비교 실험 부족"
+        },
+        "generalization": {
+            "label": "일반화 한계",
+            "description": "특정 조건/환경/도메인에서만 작동, 다른 분야 적용 어려움"
+        },
+        "practicality": {
+            "label": "실용성 한계",
+            "description": "계산 비용, 구현 복잡도, 실제 배포/적용의 어려움, 윤리적 문제"
+        },
+    }
+
+    # 동적 축 생성 설정
+    GAP_AXES_DYNAMIC_MAX: int = 2      # 동적으로 추가할 최대 축 수
+    GAP_AXES_DYNAMIC_MIN_PAPERS: int = 3  # 축으로 인정할 최소 논문 반복 수
+    
     # SCIENCEON_API_KEY: Optional[str] = os.getenv("SCIENCEON_API_KEY")
 
 # Singleton instance
