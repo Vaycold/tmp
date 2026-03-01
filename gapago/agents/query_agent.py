@@ -70,7 +70,6 @@ Last critic signals:
 TASK:
 1) Generate a source-agnostic keyword lists for retrieval agent.
    - Do NOT include database-specific syntax (no ti:, abs:, ANDNOT, site:, etc.)
-2) Decide if clarification is needed to improve retrieval quality.
 
 Output JSON only with EXACT keys:
 {{
