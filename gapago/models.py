@@ -26,10 +26,22 @@ class LimitationItem(BaseModel):
 
 class GapCandidate(BaseModel):
     """Research gap identified from limitations."""
-    axis: str
-    gap_statement: str
+    axis: str                                        # 축 key
+    axis_label: str = ""                             # 축 한글/영문 레이블
+    axis_type: str = "fixed"                         # "fixed" | "dynamic"
+    gap_statement: str                               # 핵심 GAP 1문장 요약
+    elaboration: str = ""                            # GAP 상세 설명 (2~3문장)
+    proposed_topic: str = ""                         # 제안 연구 주제
+    repeat_count: int = 0                            # 반복 등장 논문 수
     supporting_papers: list[str] = Field(default_factory=list)
     supporting_quotes: list[str] = Field(default_factory=list)
+    
+# class GapCandidate(BaseModel):
+#     """Research gap identified from limitations."""
+#     axis: str
+#     gap_statement: str
+#     supporting_papers: list[str] = Field(default_factory=list)
+#     supporting_quotes: list[str] = Field(default_factory=list)
 
 
 class CriticScores(BaseModel):

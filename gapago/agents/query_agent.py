@@ -70,18 +70,17 @@ Last critic signals:
 TASK:
 1) Generate a source-agnostic keyword lists for retrieval agent.
    - Do NOT include database-specific syntax (no ti:, abs:, ANDNOT, site:, etc.)
-2) Decide if clarification is needed to improve retrieval quality.
 
 Output JSON only with EXACT keys:
 {{
   "refined_query": "Concise search string (6-12 words, English)",
   "keywords": ["3-6 important terms/phrases, English"],
   "negative_keywords": ["0-4 terms to exclude, English"],
-  "needs_clarification": true/false,
-  "clarifying_questions": ["2-3 questions if needs_clarification is true, else []"],
   "reason": "short reason"
 }}
 """
+#"needs_clarification": true/false,
+#"clarifying_questions": ["2-3 questions if needs_clarification is true, else []"],
 
     messages = [
         {"role": "system", "content": "You optimize academic search intent and ask clarifying questions when needed."},
@@ -99,12 +98,13 @@ Output JSON only with EXACT keys:
         state["trace"]["query_analysis"] = state["refined_query"]
         state["trace"]["query_reason"] = result.get("reason", "")
 
-        needs = bool(result.get("needs_clarification", False))
-        questions = result.get("clarifying_questions", [])
-        questions = [q.strip() for q in questions if isinstance(q, str) and q.strip()]
+        # needs = bool(result.get("needs_clarification", False))
+        # questions = result.get("clarifying_questions", [])
+        # questions = [q.strip() for q in questions if isinstance(q, str) and q.strip()]
 
-        state["trace"]["clarify_questions"] = questions[:5]
-        state["trace"]["clarify_needed"] = needs
+        # state["trace"]["clarify_questions"] = questions[:5]
+        # state["trace"]["clarify_needed"] = needs
+        # ambiguity_check에서 이미 모호성 검증 완료 → clarify 분기 없음
 
         print(f"  ✓ Refined: {state['refined_query']}")
         print(f"  ✓ Keywords: {', '.join(state['keywords'])}")
