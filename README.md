@@ -1,1 +1,0 @@
-# AI-Co-Scientist-Challenge
