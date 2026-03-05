@@ -17,22 +17,17 @@ logging.langsmith(LANGSMITH_PROJECT)
 
 @dataclass
 class Configuration:
-    # Search Settings
     tavily_max_results: int = field(
-        default=os.getenv("TAVILY_MAX_RESULTS"),
+        default=int(os.getenv("TAVILY_MAX_RESULTS")),
         metadata={
             "description": "Maximum number of Tavily search results",
             "range": [1, 50],
         },
     )
     arxiv_max_docs: int = field(
-        default=os.getenv("ARXIV_MAX_RESULTS"),
+        default=int(os.getenv("ARXIV_MAX_RESULTS")),
         metadata={"description": "Maximum number of ArXiv documents", "range": [1, 50]},
     )
-
-    # (선택) 기타 런타임 옵션들 추가 가능
-    # retrieval_timeout: int = 30
-    # enable_checkpointing: bool = True
 
     @classmethod
     def from_runnable_config(
@@ -40,9 +35,12 @@ class Configuration:
     ) -> "Configuration":
         configurable = config.get("configurable", {}) if config else {}
         defaults = cls()
+
         return cls(
-            tavily_max_results=configurable.get(
-                "tavily_max_results", defaults.tavily_max_results
+            tavily_max_results=int(
+                configurable.get("tavily_max_results", defaults.tavily_max_results)
             ),
-            arxiv_max_docs=configurable.get("arxiv_max_docs", defaults.arxiv_max_docs),
+            arxiv_max_docs=int(
+                configurable.get("arxiv_max_docs", defaults.arxiv_max_docs)
+            ),
         )

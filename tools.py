@@ -1,4 +1,3 @@
-# gapago/tools.py
 from __future__ import annotations
 
 from typing import Optional, List
@@ -12,6 +11,7 @@ from config import Configuration
 from utils.tavily import TavilySearch
 
 
+# =========================== 1. RETRIEVAL AGENT ==========================
 class ArxivSearchInput(BaseModel):
     query: str = Field(description="arXiv 검색 쿼리")
     max_docs: int = Field(default=3, description="가져올 문서 수")
@@ -37,7 +37,7 @@ def build_retrieval_tools(config: Optional[RunnableConfig] = None) -> List:
     RunnableConfig 기반으로 retriever/tool 인스턴스를 생성하고
     LangChain tool 리스트로 반환
     """
-    cfg = Configuration.from_runnable_config(config)
+    cfg = Configuration.from_runnable_config()
 
     tavily_tool = TavilySearch(max_results=cfg.tavily_max_results)
 
@@ -48,8 +48,9 @@ def build_retrieval_tools(config: Optional[RunnableConfig] = None) -> List:
     )
 
     @tool(args_schema=ArxivSearchInput)
-    def arxiv_search_tool(query: str, max_docs: int = 3) -> str:
+    def arxiv_search_tool(query: str, max_docs: Optional[int] = None) -> str:
         """Search arXiv and return formatted documents for LLM context."""
+        max_docs = cfg.arxiv_max_docs
         try:
             results = arxiv_retriever.invoke(
                 query,
@@ -62,6 +63,9 @@ def build_retrieval_tools(config: Optional[RunnableConfig] = None) -> List:
             return f"<Error>Arxiv search failed: {str(e)}</Error>"
 
     return [arxiv_search_tool, tavily_tool]
+
+
+# ==============================================================================
 
 
 def build_role_tools(config: Optional[RunnableConfig] = None) -> dict:
