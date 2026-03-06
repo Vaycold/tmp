@@ -111,7 +111,10 @@ def build_graph():
     return graph
 
 
-# ====================== Main Graph Instance ======================
-
-# Graph instance for use in LangGraph Studio
-graph = build_graph()
+"""
+체크포인터(memory)
+- 각 노드간 실행결과를 추적하기 위한 메모리
+- 체크포인터를 활용하여 특정 시점(snapshot)으로 되돌리기 기능도 가능!
+- multi turn 대화에도 유용함
+- compile 지정하여 그래프 생성
+"""

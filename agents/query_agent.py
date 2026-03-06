@@ -1,3 +1,21 @@
+# =====================================================================
+# ============================== Node =================================
+# =====================================================================
+"""
+노드(Node)에 대한 모든 것
+1. 핵심 로직에 해당하는 함수, 노드를 만드는 것이 중요함.
+   세부 단계(작은 단위)로 나눠 노드를 만들 수록 더욱 정교한 튜닝(흐름) 가능함
+2. 노드를 만드는 법?
+    - 함수로 정의
+    - 사전에 정의한 상태가 'Input(입력)' & 'Output(출력)' 임
+    - Input(입력) = state: AgentState
+      : 상태를 입력으로 받아 필요한 정보를 상태로부터 받아 꺼내서 사용
+      : 딕셔너리이므로 필요한 'Key'로 조회해서 사용
+    - Output(출력)
+      : 상태에 담아서 보냄
+"""
+
+
 # 3-1) Query Analysis Agent
 from states import AgentState
 from langchain.agents import create_agent
@@ -6,7 +24,7 @@ from tools import build_role_tools
 from prompts.system import make_system_prompt
 from llm import get_llm
 
-llm = get_llm("azure", "gpt-5.1-chat")
+llm = get_llm()
 
 
 ROLE_TOOLS = build_role_tools()
