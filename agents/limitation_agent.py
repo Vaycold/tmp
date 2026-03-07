@@ -42,6 +42,53 @@ limitation_extract_agent = create_agent(
 
 
 def limitation_extract_node(state: AgentState) -> AgentState:
-    result = limitation_extract_agent.invoke(state)
-    last = AIMessage(content=result["messages"][-1].content, name="limitation_extract")
+    """
+    - LangChain 에이전트 + AIMessage 반환 구조 유지
+    - 모든 논문 순회 + 에러 격리
+    - 병목 방지: limitation_extract 메시지만 반환
+    """
+    papers = state.get("papers", [])
+
+    # 논문 없을 때 조기 반환
+    if not papers:
+        print("  ⚠️ No papers to analyze")
+        empty_msg = AIMessage(content="No papers to analyze.", name="limitation_extract")
+        return {"messages": [empty_msg], "sender": "limitation_extract"}
+
+    all_limitations = []
+    errors = []
+
+    # 논문별 개별 순회 처리
+    for paper in papers:
+        try:
+            result = limitation_extract_agent.invoke({
+                **state,
+                # 현재 논문 메시지만 전달: GAP agent와의 병목 방지 
+                "messages": [
+                    AIMessage(content=(
+                        f"Extract limitations from the following paper.\n\n"
+                        f"paper_id: {paper.paper_id}\n"
+                        f"Title: {paper.title}\n"
+                        f"Abstract: {paper.abstract}"
+                    ))
+                ]
+            })
+            last_content = result["messages"][-1].content
+            all_limitations.append(last_content)
+            print(f"  ✓ Extracted limitations for {paper.paper_id}")
+
+        except Exception as e:
+            error_msg = f"Limitation extraction error for {paper.paper_id}: {str(e)}"
+            errors.append(error_msg)
+            print(f"  ⚠️ {error_msg}")
+            continue
+    combined_content = "\n\n".join(all_limitations)
+
+    if errors:
+        combined_content += "\n\nERRORS:\n" + "\n".join(errors)
+
+    print(f"  ✓ Processed {len(all_limitations)}/{len(papers)} papers")
+
+    # AIMessage 반환 구조 유지
+    last = AIMessage(content=combined_content, name="limitation_extract")
     return {"messages": [last], "sender": "limitation_extract"}
