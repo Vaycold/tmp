@@ -6,7 +6,7 @@ from tools import build_role_tools
 from prompts.system import make_system_prompt
 from llm import get_llm
 
-llm = get_llm()
+llm = get_llm(temperature = 0)
 
 
 ROLE_TOOLS = build_role_tools()
@@ -18,6 +18,23 @@ limitation_extract_agent = create_agent(
     system_prompt=make_system_prompt(
         "ROLE: Limitation Extract Agent\n"
         "You extract limitation/future-work statements from retrieved papers/snippets.\n"
+        "RULES:\n"
+        "1. Process ALL papers in the input without exception.\n"
+        "2. Extract 1-2 key limitations per paper. No more, no less.\n"
+        "3. Each limitation MUST include:\n"
+        "   - paper_id: the paper's unique identifier\n"
+        "   - claim: a brief limitation statement (1-2 sentences)\n"
+        "   - evidence_quote: an exact quote from the abstract or body\n"
+        "4. Do NOT infer or assume limitations not stated in the text.\n"
+        "5. Do NOT skip any paper even if the abstract is short or unclear.\n"
+        "6. Do NOT infer gaps yet.\n\n"
+
+        "OUTPUT FORMAT (strictly follow):\n"
+        "paper_id: <id>\n"
+        "  - claim: <limitation statement>\n"
+        "    evidence_quote: <exact quote from paper>\n"
+        "  - claim: <limitation statement>\n"
+        "    evidence_quote: <exact quote from paper>\n"
         "Output be structured: paper_id -> [limitation_sentences], plus brief rationale.\n"
         "Do NOT infer gaps yet.\n"
     ),
