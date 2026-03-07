@@ -1,4 +1,6 @@
-# 3-2) Paper Retrieval Agent (tool-using)
+# 3-3) Paper Retrieval Agent (tool-using selector)
+from __future__ import annotations
+
 from states import AgentState
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage
@@ -15,18 +17,39 @@ paper_retrieval_agent = create_agent(
     llm,
     tools=RETRIEVAL_TOOLS,
     system_prompt=make_system_prompt(
-        "ROLE: Paper Retrieval Agent\n"
-        "You retrieve relevant papers using available tools.\n"
-        "Process:\n"
-        "1) Use meaning_expand_tool to expand keywords (synonyms/acronyms).\n"
-        "2) Use arxiv_api_call_tool, web_search_tool, and scienceon_search_tool as needed.\n"
-        "3) Use bm25_rank_tool to rank retrieved items.\n\n"
-        "Output JSON with fields: \n"
-        "- expanded_terms\n"
-        "- search_candidates (optional)\n"
-        "- papers: list of {paper_id,title,year,url,abstract,score_bm25,source}\n"
-        "- notes\n"
-        "Do NOT infer gaps. Do NOT summarize beyond what is needed for matching.\n"
+        """ROLE: Paper Retrieval Agent
+You are a retrieval orchestrator. Your job is to SELECT and CALL the most appropriate search tools.
+
+Available tools:
+- web_search_tool
+- arxiv_api_call_tool
+- scienceon_search_tool (currently placeholder)
+
+Inputs may include a previous Meaning Expansion Agent message containing:
+- refined_query
+- keywords
+- expanded_terms
+- arxiv_query_candidates
+- web_query_candidates
+- scienceon_query_candidates
+
+Rules:
+1) Do not perform meaning expansion yourself.
+2) Use only the available tools above.
+3) Select the minimum useful set of tools.
+4) Prefer arxiv_api_call_tool for academic paper search.
+5) Use web_search_tool for supplementary discovery or when the query is broad.
+6) ScienceON may be selected when Korean or domestic research coverage is useful, but it is currently not implemented.
+
+Output JSON with fields:
+- selected_tools: [..]
+- tool_rationale: <string>
+- papers: list of {paper_id,title,year,url,abstract,authors,source}
+- web_results: list
+- scienceon_results: list
+- notes: list[str]
+Do NOT infer limitations or gaps.
+"""
     ),
 )
 
