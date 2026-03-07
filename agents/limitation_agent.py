@@ -6,7 +6,7 @@ from tools import build_role_tools
 from prompts.system import make_system_prompt
 from llm import get_llm
 
-llm = get_llm(temperature = 0)
+llm = get_llm()
 
 
 ROLE_TOOLS = build_role_tools()
