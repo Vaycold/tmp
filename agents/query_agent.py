@@ -64,6 +64,13 @@ def query_analysis_node(state: AgentState) -> AgentState:
 
     # ask_human: interrupt
     ask_human = bool(need_clarify) and not state.get("query_approved", False)
+    
+    # query_proposal 파싱해서 refined_query에 저장 for critic_agent
+    refined_query = state.get("refined_query", "")
+    for line in content.splitlines():
+        if "query_proposal:" in line.lower():
+            refined_query = line.split(":", 1)[-1].strip().strip('"')
+            break
 
     last = AIMessage(content=content, name="query_analysis")
 
@@ -72,6 +79,7 @@ def query_analysis_node(state: AgentState) -> AgentState:
         "sender": "query_analysis",
         "ask_human": ask_human,
         "iteration": it,
+        "refined_query": refined_query,
     }
 
 
