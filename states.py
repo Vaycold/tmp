@@ -37,6 +37,18 @@ class Paper(BaseModel):
     year: int
     authors: List[str] = Field(default_factory=list)
     score_bm25: float = 0.0
+    # full text 섹션 추가
+    full_text_sections: dict = Field(default_factory=dict)
+    """
+    {
+        "introduction": "...",
+        "conclusion":   "...",
+        "limitations":  "...",
+        "future_work":  "...",
+        "discussion":   "...",
+    }
+    비어 있으면 abstract만 사용 (fallback)
+    """
 
 
 class LimitationItem(BaseModel):
