@@ -45,21 +45,35 @@ def _parse_papers_from_tool_messages(messages: list) -> list[dict]:
 
     return papers
 
-
 def paper_retrieval_node(state: AgentState) -> AgentState:
-    result = paper_retrieval_agent.invoke(state)
+
+    # ✅ 누적 메시지 병목 방지: query_analysis 메시지만 전달
+    query_messages = [
+        m for m in state.get("messages", [])
+        if getattr(m, "name", None) == "query_analysis"
+    ]
+
+    # query_analysis 메시지 없으면 user_question으로 fallback
+    if not query_messages:
+        from langchain_core.messages import HumanMessage
+        query_messages = [
+            HumanMessage(content=state.get("user_question", ""))
+        ]
+
+    result = paper_retrieval_agent.invoke({
+        **state,
+        "messages": query_messages  # ✅ 필요한 메시지만 전달
+    })
+
     messages = result.get("messages", [])
 
-    # ✅ tool 결과에서 papers 파싱
     raw_papers = _parse_papers_from_tool_messages(messages)
 
-    # ✅ BM25 랭킹
     query = state.get("refined_query") or state.get("user_question", "")
     if raw_papers and query:
         ranked = bm25_rank(raw_papers, query, top_k=10)
         raw_papers = ranked.get("selected", raw_papers)
 
-    # ✅ Paper 객체로 변환 후 state["papers"]에 저장
     papers = []
     for p in raw_papers:
         try:
@@ -71,7 +85,7 @@ def paper_retrieval_node(state: AgentState) -> AgentState:
                 year=p.get("year", 0),
                 authors=p.get("authors", []),
                 score_bm25=p.get("score_bm25", 0.0),
-                full_text_sections=p.get("full_text_sections", {}),  # ✅ full text 포함
+                full_text_sections=p.get("full_text_sections", {}),
             ))
         except Exception as e:
             print(f"  ⚠️ Paper parsing error: {e}")
@@ -83,5 +97,5 @@ def paper_retrieval_node(state: AgentState) -> AgentState:
     return {
         "messages": [last],
         "sender": "paper_retrieval",
-        "papers": papers,  # ✅ state["papers"]에 저장
+        "papers": papers,
     }
