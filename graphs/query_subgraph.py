@@ -7,7 +7,7 @@ from agents import human_clarify_node, query_analysis_node, query_refinement_nod
 def route_after_query_analysis(state: AgentState) -> str:
     if state.get("is_ambiguous", False):
         return "human_clarify"
-    return "query_refinement"
+    return "next"
 
 
 def build_subgraph():
@@ -15,7 +15,7 @@ def build_subgraph():
 
     builder.add_node("query_analysis", query_analysis_node)
     builder.add_node("human_clarify", human_clarify_node)
-    builder.add_node("query_refinement", query_refinement_node)
+    # builder.add_node("query_refinement", query_refinement_node)
 
     builder.add_edge(START, "query_analysis")
 
@@ -24,7 +24,7 @@ def build_subgraph():
         route_after_query_analysis,
         {
             "human_clarify": "human_clarify",
-            "query_refinement": "query_refinement",
+            "next": END,
         },
     )
 
@@ -32,7 +32,7 @@ def build_subgraph():
     builder.add_edge("human_clarify", "query_analysis")
 
     # 검색용 쿼리 정제 완료 후 서브그래프 종료
-    builder.add_edge("query_refinement", END)
+    # builder.add_edge("query_refinement", END)
 
     graph = builder.compile(
         interrupt_before=["human_clarify"],
