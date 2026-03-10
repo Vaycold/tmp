@@ -1,10 +1,9 @@
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from states import AgentState
+from .query_subgraph import build_subgraph
 
 from agents import (
-    human_clarify_node,
-    query_analysis_node,
     meaning_expand_node,
     paper_retrieval_node,
     limitation_extract_node,
@@ -12,22 +11,6 @@ from agents import (
     critic_score_node,
     final_response_node,
 )
-
-
-def route_after_query(state: AgentState) -> str:
-    """
-    query_analysis -> (meaning_expand) 기본
-    모호하면 query_analysis에서 재질문/보완 후 다시 query_analysis로 루프
-    """
-    last = state["messages"][-1].content if state.get("messages") else ""
-
-    if "FINAL ANSWER" in (last or ""):
-        return END
-
-    if state.get("ask_human", False) and not state.get("query_approved", False):
-        return "human_clarify"
-
-    return "meaning_expand"
 
 
 def route_after_critic(state: AgentState) -> str:
@@ -50,16 +33,19 @@ def route_after_critic(state: AgentState) -> str:
         return "meaning_expand"
 
     if "DECISION: REFINE_QUERY" in last:
-        return "query_analysis"
+        return "query_subgraph"
 
-    return "query_analysis"
+    # 태그가 없다면 보수적으로 query 재정제 쪽으로
+    return "query_subgraph"
 
 
 def build_graph():
+    query_subgraph = build_subgraph()
+
     workflow = StateGraph(AgentState)
 
-    workflow.add_node("query_analysis", query_analysis_node)
-    workflow.add_node("human_clarify", human_clarify_node)
+    # Add nodes
+    workflow.add_node("query_subgraph", query_subgraph)
     workflow.add_node("meaning_expand", meaning_expand_node)
     workflow.add_node("paper_retrieval", paper_retrieval_node)
     workflow.add_node("limitation_extract", limitation_extract_node)
@@ -67,19 +53,10 @@ def build_graph():
     workflow.add_node("critic_score", critic_score_node)
     workflow.add_node("final_response", final_response_node)
 
-    workflow.add_edge(START, "query_analysis")
-
-    workflow.add_conditional_edges(
-        "query_analysis",
-        route_after_query,
-        {
-            "human_clarify": "human_clarify",
-            "meaning_expand": "meaning_expand",
-            END: END,
-        },
-    )
-
-    workflow.add_edge("human_clarify", "query_analysis")
+    # Define edges
+    # start -> query_analysis
+    workflow.add_edge(START, "query_subgraph")
+    workflow.add_edge("query_subgraph", "meaning_expand")
     workflow.add_edge("meaning_expand", "paper_retrieval")
     workflow.add_edge("paper_retrieval", "limitation_extract")
     workflow.add_edge("limitation_extract", "gap_infer")
@@ -90,7 +67,7 @@ def build_graph():
         route_after_critic,
         {
             "meaning_expand": "meaning_expand",
-            "query_analysis": "query_analysis",
+            "query_subgraph": "query_subgraph",
             "final_response": "final_response",
             END: END,
         },
@@ -100,7 +77,19 @@ def build_graph():
 
     graph = workflow.compile(
         checkpointer=MemorySaver(),
-        interrupt_before=["human_clarify"],
     )
 
     return graph
+
+
+"""
+체크포인터(memory)
+- 각 노드간 실행결과를 추적하기 위한 메모리
+- 체크포인터를 활용하여 특정 시점(snapshot)으로 되돌리기 기능도 가능!
+- multi turn 대화에도 유용함(thread_id 만 변경하면 새로운 대화로 바꿔줌)
+- compile 지정하여 그래프 생성
+- Human-In-The-Loop 를 위해 필수 요소
+
+-`get_state_history` 메서드를 사용하여 상태 기록을 가져오는 방법
+- 상태 기록을 통해 원하는 상태를 지정하여 해당 지점에서 다시 시작 가능(Replay 기능)
+"""
