@@ -15,7 +15,7 @@ from typing_extensions import Annotated
 # =====================================================================
 # ============================ Data Models ============================
 # =====================================================================
-'''
+"""
 `Annotated` 사용 이유
 - 추가 정보 제공(타입 힌트) / 문서화
 - 타입 힌트에 추가적인 정보(코드에 대한 추가 설명)를 포함시킬 수 있음. 
@@ -26,7 +26,9 @@ from typing_extensions import Annotated
     ... = 누락되면 안된다는 뜻
     salary = 0~10000이어야함을 명시
 
-'''
+"""
+
+
 class Paper(BaseModel):
     """Individual paper metadata from arXiv."""
 
@@ -120,21 +122,21 @@ class EvaluationResult(BaseModel):
 
 
 class AgentState(TypedDict):
+    # ==================================================================
+    # -0- ORCHESTRATION
     messages: Annotated[Sequence[BaseMessage], add_messages]
     sender: Annotated[str, "The sender of the last message"]
+    errors: List[str]
 
     # ==================================================================
     # -1- QUERY AGENT
-    user_question: str
-    refined_query: str
+    iteration: int
+    is_ambiguous: bool
+    clarify_questions: List[str]
+
     keywords: List[str]
     negative_keywords: List[str]
-
-    missing_slots: List[str]
-    clarify_questions: List[str]
-    query_proposal: str
-    query_approved: bool
-    ask_human: bool
+    refined_query: str
 
     # ==================================================================
     # -2- RETRIEVE AGENT
@@ -154,7 +156,7 @@ class AgentState(TypedDict):
 
     # ==================================================================
     # 추후 다시 확인
-    iteration: int
-    max_iterations: int
-    errors: List[str]
+    # iteration: int
+    # max_iterations: int
+    # errors: List[str]
     trace: dict

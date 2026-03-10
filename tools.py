@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
 from rank_bm25 import BM25Okapi
+from rank_bm25 import BM25Okapi
 
 from config import Configuration
 from utils.tavily import TavilySearch
