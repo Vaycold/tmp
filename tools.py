@@ -7,17 +7,10 @@ import time
 import requests
 import xml.etree.ElementTree as ET
 from urllib.parse import urlencode
-import json
-import re
-import time
-import requests
-import xml.etree.ElementTree as ET
-from urllib.parse import urlencode
 from pydantic import BaseModel, Field
 
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
-from rank_bm25 import BM25Okapi
 from rank_bm25 import BM25Okapi
 
 from config import Configuration
@@ -91,9 +84,6 @@ def _parse_atom(xml_text: str) -> list[dict]:
             if link.attrib.get("rel") == "alternate" and link.attrib.get("href"):
                 url = link.attrib["href"]
                 break
-            
-        # ✅ full text 섹션 수집
-        full_text_sections = fetch_full_text_sections(url)
 
         out.append({
             "paper_id": f"arxiv:{arxiv_id}",
@@ -104,7 +94,6 @@ def _parse_atom(xml_text: str) -> list[dict]:
             "authors": authors,
             "score_bm25": 0.0,
             "source": "arxiv",
-            "full_text_sections": full_text_sections,
         })
 
     return out

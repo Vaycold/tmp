@@ -18,7 +18,7 @@ logging.langsmith(LANGSMITH_PROJECT)
 @dataclass
 class Configuration:
     tavily_max_results: int = field(
-        default=int(os.getenv('TAVILY_MAX_RESULTS')),
+        default=int(os.getenv("TAVILY_MAX_RESULTS")),
         metadata={
             "description": "Maximum number of Tavily search results",
             "range": [1, 50],
