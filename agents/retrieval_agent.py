@@ -1,5 +1,7 @@
-# 3-2) Paper Retrieval Agent
-from states import AgentState, Paper
+# 3-3) Paper Retrieval Agent (tool-using selector)
+from __future__ import annotations
+
+from states import AgentState
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage
 from tools import build_role_tools, bm25_rank, _safe_json_loads
@@ -22,28 +24,6 @@ paper_retrieval_agent = create_agent(
     ),
 )
 
-
-def _parse_papers_from_tool_messages(messages: list) -> list[dict]:
-    """
-    tool_calls 결과에서 arxiv_api_call_tool이 반환한 JSON을 파싱해
-    paper dict 리스트로 반환.
-    """
-    papers = []
-    for msg in messages:
-        # ToolMessage에서 arxiv 결과 추출
-        content = getattr(msg, "content", "")
-        if not content:
-            continue
-
-        data = _safe_json_loads(content)
-        if not data:
-            continue
-
-        # arxiv_api_call_tool 결과
-        if isinstance(data, dict) and data.get("source") == "arxiv":
-            papers.extend(data.get("results", []))
-
-    return papers
 
 def paper_retrieval_node(state: AgentState) -> AgentState:
 
