@@ -4,6 +4,7 @@ from states import AgentState
 from .query_subgraph import build_subgraph
 
 from agents import (
+    meaning_expand_node,
     paper_retrieval_node,
     limitation_extract_node,
     gap_infer_node,
@@ -15,14 +16,13 @@ from agents import (
 def route_after_critic(state: AgentState) -> str:
     """
     critic_score ->
-      - ACCEPT          -> final_response (최종 리포트 작성)
-      - REDO_RETRIEVAL  -> paper_retrieval
+      - ACCEPT          -> final_response
+      - REDO_RETRIEVAL  -> meaning_expand -> paper_retrieval
       - REFINE_QUERY    -> query_analysis
-      - FINAL ANSWER    -> END (안전장치)
+      - FINAL ANSWER    -> END
     """
     last = state["messages"][-1].content or ""
 
-    # 어떤 노드든 FINAL ANSWER가 나오면 즉시 종료 (안전장치)
     if "FINAL ANSWER" in last:
         return END
 
@@ -30,7 +30,7 @@ def route_after_critic(state: AgentState) -> str:
         return "final_response"
 
     if "DECISION: REDO_RETRIEVAL" in last:
-        return "paper_retrieval"
+        return "meaning_expand"
 
     if "DECISION: REFINE_QUERY" in last:
         return "query_subgraph"
@@ -46,6 +46,7 @@ def build_graph():
 
     # Add nodes
     workflow.add_node("query_subgraph", query_subgraph)
+    workflow.add_node("meaning_expand", meaning_expand_node)
     workflow.add_node("paper_retrieval", paper_retrieval_node)
     workflow.add_node("limitation_extract", limitation_extract_node)
     workflow.add_node("gap_infer", gap_infer_node)
@@ -55,17 +56,17 @@ def build_graph():
     # Define edges
     # start -> query_analysis
     workflow.add_edge(START, "query_subgraph")
-    workflow.add_edge("query_subgraph", "paper_retrieval")
+    workflow.add_edge("query_subgraph", "meaning_expand")
+    workflow.add_edge("meaning_expand", "paper_retrieval")
     workflow.add_edge("paper_retrieval", "limitation_extract")
     workflow.add_edge("limitation_extract", "gap_infer")
     workflow.add_edge("gap_infer", "critic_score")
 
-    # critic_score -> (accept/end) 또는 (redo_retrieval/paper_retrieval) 또는 (refine_query/query_analysis)
     workflow.add_conditional_edges(
         "critic_score",
         route_after_critic,
         {
-            "paper_retrieval": "paper_retrieval",
+            "meaning_expand": "meaning_expand",
             "query_subgraph": "query_subgraph",
             "final_response": "final_response",
             END: END,
