@@ -23,13 +23,11 @@ limitation_extract_agent = create_agent(
         "3. Each limitation MUST include:\n"
         "   - paper_id: the paper's unique identifier\n"
         "   - claim: a brief limitation statement (1-2 sentences)\n"
-        # ✅ abstract or body → full text sections 반영
         "   - evidence_quote: an exact quote from the provided text sections\n"
         "4. Do NOT infer or assume limitations not stated in the text.\n"
         "5. Do NOT skip any paper even if the abstract is short or unclear.\n"
         "6. Do NOT infer gaps yet.\n\n"
 
-        # ✅ 섹션별 신뢰도 기준 추가
         "SECTION PRIORITY (high to low):\n"
         "  1. INTRODUCTION  — author-defined gaps, most reliable\n"
         "  2. CONCLUSION    — key contributions + limitations\n"
