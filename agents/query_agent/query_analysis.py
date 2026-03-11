@@ -167,7 +167,7 @@ system_prompt = make_system_prompt(
     "2) Use reasoning first, then assign scores conservatively.\n"
     "3) Estimate whether meaningful academic paper retrieval is possible with current information.\n"
     "4) Suggest dynamic importance weights for the 5 criteria.\n"
-    "5) Suggest a refined academic search query.\n"
+    "5) Suggest a keyword for academic search query.\n"
     "6) If the question is ambiguous, ask concise clarifying questions.\n\n"
     "Scoring guidance (Anchor Points):\n"
     "- 0.0: No mention at all. Information is completely missing.\n"
@@ -181,11 +181,17 @@ system_prompt = make_system_prompt(
     "- Do not infer unstated details: Only score based on text explicitly provided by the user.\n"
     "- Methodological paradigms (e.g., 'transfer learning', 'GAN') should be scored at least 0.7 for methodology_clarity.\n"
     "- If a concept is mentioned but you need to ask a 'Which one?' question, it should not exceed 0.6.\n\n"
-    "Suggested query guideline:\n"
-    "- Write the suggested query as a natural academic research question.\n"
-    "- Do NOT output keyword lists or search engine queries.\n"
-    "- Use a full sentence similar to researcher's question.\n"
+    "Suggested keyword guideline:\n"
+    "- suggested_keword: write it as a natural academic research question.\n"
     "- Keep the original user intent while making the question clearer and more specific.\n\n"
+    "Keyword extraction guideline:\n"
+    "- Extract 2 to 5 concise keywords or short phrases only.\n"
+    "- Build keywords directly from the user answer without expansion.\n"
+    "- Prioritize domain terms, task-defining terms, and important data or sensor terms.\n"
+    "- Good examples: PMSM fault diagnosis, vibration sensor, urban airflow, battery health.\n"
+    "- Avoid generic terms such as AI, model, system, study unless they are the actual core concept.\n"
+    "- negative_keywords: include 1 to 3 short exclusion terms only when explicit exclusion is useful; otherwise return an empty list.\n"
+    "- Do not include full sentences and do not expand synonyms.\n\n"
     "Importance weight constraints:\n"
     "- All weights must be positive real numbers (>= 0).\n"
     "- The sum of all weights must equal exactly 1.0.\n"
@@ -246,7 +252,16 @@ def query_analysis_node(state: AgentState) -> AgentState:
     )
     is_ambiguous = (hard_fail or soft_fail) and (it < max_it)
 
-    # 5. 결과 메시지 구성
+    # 5. retrieval-ready keyword state 구성
+    keywords = [kw.strip() for kw in (parsed.keywords or []) if isinstance(kw, str) and kw.strip()][:3]
+    negative_keywords = [kw.strip() for kw in (parsed.negative_keywords or []) if isinstance(kw, str) and kw.strip()][:3]
+
+    # fallback: keyword가 비어 있으면 suggested_query에서 짧은 핵심 단어만 보완
+    if not keywords and parsed.suggested_query:
+        fallback = re.split(r"[,/;]| and | or ", parsed.suggested_query)
+        keywords = [x.strip() for x in fallback if isinstance(x, str) and x.strip()][:3]
+
+    # 6. 결과 메시지 구성
     analysis_content = parsed.model_dump_json()
     messages = [AIMessage(content=analysis_content, name="query_analysis")]
 
@@ -274,6 +289,8 @@ def query_analysis_node(state: AgentState) -> AgentState:
         "iteration": it,
         "is_ambiguous": is_ambiguous,
         "clarify_questions": clarify_questions,
+        "keywords": keywords,
+        "negative_keywords": negative_keywords,
         "core_clear_count": core_clear_count,
         "weighted_score": weighted_score,
     }
