@@ -204,14 +204,14 @@ def query_analysis_node(state: AgentState) -> AgentState:
         m.content.strip() for m in state["messages"] if isinstance(m, HumanMessage)
     ]
     combined_user_input = "\n".join(user_inputs)
-    messages = [
+    input_messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=combined_user_input),
     ]
     # 입력값 방식 2) 누적된 모든 Message
     # messages = [SystemMessage(content=system_prompt), *state["messages"]]
 
-    parsed: QueryAnalysis = structured_llm.invoke(messages)
+    parsed: QueryAnalysis = structured_llm.invoke(input_messages)
 
     # 1. 각 축의 모호성 가중 점수 계산
     dynamic_weights = _normalize_weights(parsed.importance_weights)
