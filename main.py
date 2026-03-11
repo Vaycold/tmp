@@ -7,6 +7,7 @@ GAPAGO - Research GAP Analysis Multi-Agent System
 # 0. 환경 설정
 # =====================================================================
 import config  # noqa: F401
+import uuid
 
 # =====================================================================
 # 1. 그래프 빌드
@@ -20,6 +21,9 @@ app = build_graph()
 # =====================================================================
 # 2. 출력 유틸
 # =====================================================================
+def random_uuid():
+    return str(uuid.uuid4())
+
 def print_divider(title: str = ""):
     print("\n" + "=" * 70)
     if title:
@@ -95,7 +99,7 @@ def print_stream_events_and_capture_interrupt(app, stream_input, config_dict):
 # 3. 실행 로직
 # =====================================================================
 def run():
-    config_dict = {"configurable": {"thread_id": "1"}, "recursion_limit": 30} # 최대 노드 실행 개수 지정 (순환 로직에 빠지지 않기 위함)
+    config_dict = {"configurable": {"thread_id": random_uuid()}, "recursion_limit": 30} # 최대 노드 실행 개수 지정 (순환 로직에 빠지지 않기 위함)
 
     # --- 사용자 입력 ---
     default_query = "Domain adaptation"

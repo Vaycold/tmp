@@ -11,8 +11,7 @@ ENV_PATH = os.path.join(BASE_DIR, ".env")
 OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
 
 load_dotenv(ENV_PATH, override=False)
-LANGSMITH_PROJECT = "GAPAGO"
-logging.langsmith(LANGSMITH_PROJECT)
+logging.langsmith()
 
 
 @dataclass
