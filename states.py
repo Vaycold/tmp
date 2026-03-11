@@ -117,7 +117,7 @@ class QueryAnalysis(BaseModel):
         List[str],
         Field(
             default_factory=list,
-            description="1 to 3 core keywords extracted from the user question for downstream retrieval. Prioritize domain terms, sensor/data terms, and task-defining terms without expansion.",
+            description="2 to 5 core keywords extracted from the user question for downstream retrieval. Prioritize domain terms, sensor/data terms, and task-defining terms without expansion.",
         ),
     ]
     negative_keywords: Annotated[
