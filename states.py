@@ -6,29 +6,117 @@ This module defines the states used at each stage of the research process.
 from typing import List, Annotated, Optional
 from typing_extensions import TypedDict
 from pydantic import BaseModel, Field
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.graph import add_messages
 from typing import Sequence
 from typing_extensions import Annotated
+import operator
 
 
 # =====================================================================
-# ============================ Data Models ============================
+# ======================== Data Models(Schema) ========================
 # =====================================================================
-"""
-`Annotated` 사용 이유
-- 추가 정보 제공(타입 힌트) / 문서화
-- 타입 힌트에 추가적인 정보(코드에 대한 추가 설명)를 포함시킬 수 있음. 
-- 이는 코드를 읽는 사람이나 도구에 더 많은 컨텍스트를 제공함
-
-- salary: Annotated[float, Field(gt=0, lt=10000, description="연봉 (단위: 만원, 최대 10억)")]
-  skills: Annotated[List[str], Field(min_items=1, max_items=10, description="보유 기술 (1-10개)")]
-    ... = 누락되면 안된다는 뜻
-    salary = 0~10000이어야함을 명시
-
-"""
 
 
+# =====================================================================
+# -1- QUERY AGENT
+class Score(BaseModel):
+    """Evaluate the user question on 5 criteria."""
+
+    score: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            le=1.0,
+            ㅡdescription="Clarity score for a specific evaluation criterion.",
+        ),
+    ]
+    reason: Annotated[
+        str, Field(default="", description="Reason explaining the assigned score.")
+    ]
+    clarifying_question: Annotated[
+        Optional[str],
+        Field(
+            description="Question to clarify missing information for this criterion."
+        ),
+    ]
+
+
+class Scores(BaseModel):
+
+    domain_clarity: Score
+    task_clarity: Score
+    methodology_clarity: Score
+    data_clarity: Score
+    temporal_clarity: Score
+
+
+class ImportanceWeights(BaseModel):
+    """Dynamic Importance Weights for the 5 criteria."""
+
+    domain_clarity: Annotated[
+        float, Field(description="Weight for domain clarity importance.")
+    ] = 0.30
+    task_clarity: Annotated[
+        float, Field(description="Weight for task clarity importance.")
+    ] = 0.25
+    methodology_clarity: Annotated[
+        float, Field(description="Weight for methodology clarity importance.")
+    ] = 0.20
+    data_clarity: Annotated[
+        float, Field(description="Weight for data specification importance.")
+    ] = 0.15
+    temporal_clarity: Annotated[
+        float, Field(description="Weight for temporal scope importance.")
+    ] = 0.10
+
+
+class SearchReadiness(BaseModel):
+    """Estimation whether meaningful academic paper retrieval is possible with current information."""
+
+    can_retrieve_meaningful_papers: Annotated[
+        bool,
+        Field(
+            description="Whether the query contains enough information for meaningful paper retrieval."
+        ),
+    ] = False
+    confidence: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            le=1.0,
+            description="Confidence that meaningful retrieval is possible.",
+        ),
+    ] = 0.0
+    reason: Annotated[
+        str,
+        Field(description="Explanation supporting the retrieval readiness decision."),
+    ] = ""
+
+
+class QueryAnalysis(BaseModel):
+    """Evaluation ambiguity and rewriting academic research questions"""
+
+    scores: Annotated[
+        Scores, Field(description="Evaluation scores for each ambiguity criterion.")
+    ]
+    importance_weights: Annotated[
+        ImportanceWeights,
+        Field(description="Dynamic importance weights for each criterion."),
+    ] = ImportanceWeights()
+    search_readiness: Annotated[
+        SearchReadiness, Field(description="Overall evaluation of search readiness.")
+    ] = SearchReadiness()
+    suggested_query: Annotated[
+        str,
+        Field(
+            description="An optimized keyword-based academic search query inferred from the user question, filling missing details if necessary."
+        ),
+    ]
+
+
+# =====================================================================
+# -2- RETRIEVE AGENT
 class Paper(BaseModel):
     """Individual paper metadata from arXiv."""
 
@@ -41,6 +129,8 @@ class Paper(BaseModel):
     score_bm25: float = 0.0
 
 
+# =====================================================================
+# -3- LIMITATION AGENT
 class LimitationItem(BaseModel):
     """Extracted limitation from a paper."""
 
@@ -49,6 +139,8 @@ class LimitationItem(BaseModel):
     evidence_quote: str
 
 
+# =====================================================================
+# -4- GAP INFER AGENT
 class GapCandidate(BaseModel):
     """Research gap identified from limitations."""
 
@@ -63,6 +155,8 @@ class GapCandidate(BaseModel):
     supporting_quotes: List[str] = Field(default_factory=list)
 
 
+# =====================================================================
+# -5- CRITIC AGENT
 class CriticScores(BaseModel):
     """Quality scores for the analysis."""
 
@@ -89,24 +183,11 @@ class EvaluationResult(BaseModel):
 
 
 # =====================================================================
+
+
+# =====================================================================
 # ========================= State Definitions =========================
 # =====================================================================
-"""
-상태(State)에 대한 모든 것
-1. 상태란 ?
-    - '노드와 노드 사이에 정보 전달을 할 건데 여기서 쓰는 키는 이것입니다.'를 사전에 정의하는 것
-    -  노드 별 상태 값의 변화
-2. 모든 값을 다 채우지 않아도 됨
-3. 노드에서 필요한 상태 값을 조회해서 동작에 활용
-4. 각 노드에서 새롭게 업데이트 하는 값은 기존 Key 값을 덮어쓰는 방식
-5. Reducer -> add_messages 란?
-    - 기존에 있던 메시지에 추가하는 것
-    - add_messages 추가 시, [ ] 리스트 내부에 계속 메시지가 쌓이게 됨!
-    - = append 라고 보면 됨
-
-=> 앞으로 모든 agent에서 사용할 key값을 사전에 정의
-
-"""
 
 
 class AgentState(TypedDict):

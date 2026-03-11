@@ -1,6 +1,16 @@
 import os
+from dotenv import load_dotenv
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ENV_PATH = os.path.join(BASE_DIR, ".env")
+OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
+
+load_dotenv(ENV_PATH, override=False)
+
 
 def langsmith(project_name=None, set_enable=True):
+    if project_name is None:
+        project_name = os.getenv("LANGSMITH_PROJECT", "default-project")
 
     if set_enable:
         langchain_key = os.environ.get("LANGCHAIN_API_KEY", "")
