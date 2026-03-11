@@ -276,6 +276,8 @@ def query_analysis_node(state: AgentState) -> AgentState:
         "clarify_questions": clarify_questions,
         "core_clear_count": core_clear_count,
         "weighted_score": weighted_score,
+        "refined_query": parsed.suggested_query,  # ← 이게 없으면 query_refinement에서 보존할 값이 없음
+        "user_question": combined_user_input,
     }
 
 

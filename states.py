@@ -127,6 +127,7 @@ class Paper(BaseModel):
     year: int
     authors: List[str] = Field(default_factory=list)
     score_bm25: float = 0.0
+    full_text_sections: dict = Field(default_factory=dict)
 
 
 # =====================================================================
