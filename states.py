@@ -110,7 +110,21 @@ class QueryAnalysis(BaseModel):
     suggested_query: Annotated[
         str,
         Field(
-            description="An optimized keyword-based academic search query inferred from the user question, filling missing details if necessary."
+            description="A clear natural-language academic research question inferred from the user question."
+        ),
+    ]
+    keywords: Annotated[
+        List[str],
+        Field(
+            default_factory=list,
+            description="2 to 5 core keywords extracted from the user question for downstream retrieval. Prioritize domain terms, sensor/data terms, and task-defining terms without expansion.",
+        ),
+    ]
+    negative_keywords: Annotated[
+        List[str],
+        Field(
+            default_factory=list,
+            description="Optional exclusion keywords for downstream retrieval.",
         ),
     ]
 
