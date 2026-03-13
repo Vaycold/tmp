@@ -177,10 +177,6 @@ def build_retrieval_tools(config: Optional[RunnableConfig] = None) -> List:
     - web_search_tool
     - arxiv_api_call_tool
     - scienceon_search_tool (placeholder)
-    Retrieval Agent가 선택할 수 있는 외부 검색 툴만 노출한다.
-    - web_search_tool
-    - arxiv_api_call_tool
-    - scienceon_search_tool (placeholder)
     """
     cfg = Configuration.from_runnable_config()
     tavily_tool = TavilySearch(max_results=cfg.tavily_max_results)
@@ -193,20 +189,7 @@ def build_retrieval_tools(config: Optional[RunnableConfig] = None) -> List:
         max_pages: int = 3,
     ) -> str:
         """Call arXiv API directly and return a paper list as JSON string."""
-    @tool(args_schema=ArxivApiCallInput)
-    def arxiv_api_call_tool(
-        search_query: str,
-        max_total: int = 80,
-        page_size: int = 40,
-        max_pages: int = 3,
-    ) -> str:
-        """Call arXiv API directly and return a paper list as JSON string."""
         try:
-            results = arxiv_api_call(
-                search_query=search_query,
-                max_total=max_total,
-                page_size=page_size,
-                max_pages=max_pages,
             results = arxiv_api_call(
                 search_query=search_query,
                 max_total=max_total,
@@ -218,45 +201,7 @@ def build_retrieval_tools(config: Optional[RunnableConfig] = None) -> List:
                 "query": search_query,
                 "results": results,
             }, ensure_ascii=False)
-            return json.dumps({
-                "source": "arxiv",
-                "query": search_query,
-                "results": results,
-            }, ensure_ascii=False)
         except Exception as e:
-            return f"<Error>Arxiv API call failed: {str(e)}</Error>"
-
-    @tool(args_schema=WebSearchInput)
-    def web_search_tool(query: str) -> str:
-        """Search the web API and return results as JSON string."""
-        try:
-            results = tavily_tool.search(query)
-            return json.dumps({
-                "source": "web",
-                "query": query,
-                "results": results,
-            }, ensure_ascii=False)
-        except Exception as e:
-            return f"<Error>Web search failed: {str(e)}</Error>"
-
-    @tool(args_schema=ScienceOnSearchInput)
-    def scienceon_search_tool(query: str, max_results: int = 5) -> str:
-        """ScienceON search tool placeholder until API development is complete."""
-        payload = {
-            "status": "not_implemented",
-            "source": "scienceon",
-            "query": query,
-            "max_results": max_results,
-            "message": "ScienceON API is under development.",
-            "results": [],
-        }
-        return json.dumps(payload, ensure_ascii=False)
-
-    return [
-        web_search_tool,
-        arxiv_api_call_tool,
-        scienceon_search_tool,
-    ]
             return f"<Error>Arxiv API call failed: {str(e)}</Error>"
 
     @tool(args_schema=WebSearchInput)
