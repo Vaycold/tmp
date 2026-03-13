@@ -17,14 +17,14 @@ logging.langsmith()
 @dataclass
 class Configuration:
     tavily_max_results: int = field(
-        default=int(os.getenv("TAVILY_MAX_RESULTS")),
+        default=int(os.getenv("TAVILY_MAX_RESULTS", "5")),
         metadata={
             "description": "Maximum number of Tavily search results",
             "range": [1, 50],
         },
     )
     arxiv_max_docs: int = field(
-        default=int(os.getenv("ARXIV_MAX_RESULTS")),
+        default=int(os.getenv("ARXIV_MAX_RESULTS", "10")),
         metadata={"description": "Maximum number of ArXiv documents", "range": [1, 50]},
     )
 

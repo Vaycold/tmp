@@ -28,7 +28,7 @@ class Score(BaseModel):
         Field(
             ge=0.0,
             le=1.0,
-            ㅡdescription="Clarity score for a specific evaluation criterion.",
+            description="Clarity score for a specific evaluation criterion.",
         ),
     ]
     reason: Annotated[
@@ -152,6 +152,8 @@ class LimitationItem(BaseModel):
     paper_id: str
     claim: str
     evidence_quote: str
+    track: str = "author_stated"
+    source_section: str = ""
 
 
 # =====================================================================
@@ -221,6 +223,10 @@ class AgentState(TypedDict):
     keywords: List[str]
     negative_keywords: List[str]
     refined_query: str
+    user_question: str
+    max_iterations: int
+    core_clear_count: int
+    weighted_score: float
 
     # ==================================================================
     # -2- RETRIEVE AGENT
