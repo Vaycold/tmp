@@ -2,7 +2,6 @@ from dataclasses import dataclass, field
 from typing import Optional
 from langchain_core.runnables import RunnableConfig
 import os
-from typing import Optional
 from dotenv import load_dotenv
 from utils import logging
 
@@ -14,18 +13,48 @@ load_dotenv(ENV_PATH, override=False)
 logging.langsmith()
 
 
+def _int_env(name: str, default: int) -> int:
+    value = os.getenv(name)
+    return int(value) if value not in (None, "") else default
+
+
+def _str_env(name: str, default: Optional[str] = None) -> Optional[str]:
+    value = os.getenv(name)
+    return value if value not in (None, "") else default
+
+
 @dataclass
 class Configuration:
     tavily_max_results: int = field(
-        default=int(os.getenv("TAVILY_MAX_RESULTS", "5")),
+        default=_int_env("TAVILY_MAX_RESULTS", 5),
         metadata={
             "description": "Maximum number of Tavily search results",
             "range": [1, 50],
         },
     )
     arxiv_max_docs: int = field(
-        default=int(os.getenv("ARXIV_MAX_RESULTS", "10")),
+        default=_int_env("ARXIV_MAX_RESULTS", 10),
         metadata={"description": "Maximum number of ArXiv documents", "range": [1, 50]},
+    )
+    scienceon_client_id: Optional[str] = field(
+        default=_str_env("SCIENCEON_CLIENT_ID"),
+        metadata={"description": "ScienceON client ID"},
+    )
+    scienceon_mac_address: Optional[str] = field(
+        default=_str_env("SCIENCEON_MAC_ADDRESS"),
+        metadata={"description": "ScienceON registered MAC address"},
+    )
+    scienceon_key: Optional[str] = field(
+        default=_str_env("SCIENCEON_KEY"),
+        metadata={"description": "ScienceON AES key for token issuance"},
+    )
+    scienceon_default_target: str = field(
+        default=_str_env("SCIENCEON_DEFAULT_TARGET", "ARTI") or "ARTI",
+        metadata={"description": "ScienceON default target"},
+    )
+    scienceon_default_row_count: int = field(
+        default=_int_env("SCIENCEON_DEFAULT_ROW_COUNT", 10),
+        metadata={"description": "ScienceON default row count", "range": [1, 100]},
     )
 
     @classmethod
@@ -41,5 +70,24 @@ class Configuration:
             ),
             arxiv_max_docs=int(
                 configurable.get("arxiv_max_docs", defaults.arxiv_max_docs)
+            ),
+            scienceon_client_id=configurable.get(
+                "scienceon_client_id", defaults.scienceon_client_id
+            ),
+            scienceon_mac_address=configurable.get(
+                "scienceon_mac_address", defaults.scienceon_mac_address
+            ),
+            scienceon_key=configurable.get(
+                "scienceon_key", defaults.scienceon_key
+            ),
+            scienceon_default_target=str(
+                configurable.get(
+                    "scienceon_default_target", defaults.scienceon_default_target
+                )
+            ),
+            scienceon_default_row_count=int(
+                configurable.get(
+                    "scienceon_default_row_count", defaults.scienceon_default_row_count
+                )
             ),
         )
