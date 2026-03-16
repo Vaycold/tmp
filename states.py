@@ -28,7 +28,7 @@ class Score(BaseModel):
         Field(
             ge=0.0,
             le=1.0,
-            ㅡdescription="Clarity score for a specific evaluation criterion.",
+            description="Clarity score for a specific evaluation criterion.",
         ),
     ]
     reason: Annotated[
