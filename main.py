@@ -6,9 +6,11 @@ GAPAGO - Research GAP Analysis Multi-Agent System
 # =====================================================================
 # 0. 환경 설정
 # =====================================================================
+import json
 import config  # noqa: F401
 import uuid
-
+from pathlib import Path
+from datetime import datetime
 # =====================================================================
 # 1. 그래프 빌드
 # =====================================================================
@@ -16,7 +18,8 @@ from graphs.graph import build_graph
 from langchain_core.messages import HumanMessage
 
 app = build_graph()
-
+OUTPUT_DIR = Path("outputs")
+OUTPUT_DIR.mkdir(exist_ok=True)
 
 # =====================================================================
 # 2. 출력 유틸
@@ -93,6 +96,49 @@ def print_stream_events_and_capture_interrupt(app, stream_input, config_dict):
                     latest_clarify_prompt = msg.content
 
     return interrupted, latest_clarify_prompt
+
+# =====================================================================
+# 결과 저장 - evaluate.py가 이 파일을 읽습니다
+# =====================================================================
+def save_result(query: str, state_values: dict) -> Path:
+    """
+    파이프라인 완료 후 결과를 outputs/gapago_result_YYYYMMDD_HHMMSS.json 으로 저장.
+ 
+    저장 내용:
+      - query / refined_query / keywords
+      - gaps     : gap_infer_node가 state["gaps"]에 저장한 구조화 데이터
+                   (repeat_count 내림차순 정렬 = 가장 시급한 GAP 순서)
+      - messages : 각 agent의 AIMessage 원문 (name 포함)
+    """
+    # messages 직렬화
+    messages_out = []
+    for msg in state_values.get("messages", []):
+        messages_out.append({
+            "type":    msg.type,
+            "name":    getattr(msg, "name", None),
+            "content": getattr(msg, "content", ""),
+        })
+ 
+    result = {
+        "query":         query,
+        "timestamp":     datetime.now().isoformat(),
+        "refined_query": state_values.get("refined_query", ""),
+        "keywords":      state_values.get("keywords", []),
+ 
+        # ★ 핵심: gap_infer_node가 state["gaps"]에 저장한 구조화 데이터
+        #   repeat_count 내림차순 정렬 상태 그대로 저장
+        "gaps": state_values.get("gaps", []),
+ 
+        "messages": messages_out,
+    }
+ 
+    fname = f"gapago_result_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    path  = OUTPUT_DIR / fname
+    path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+ 
+    print(f"\n  ✅ 결과 저장 완료 → {path}")
+    print(f"  평가 실행: python evaluate.py --result-file {path}")
+    return path
 
 
 # =====================================================================
@@ -173,7 +219,8 @@ def run():
         print(values["messages"][-1].content)
     else:
         print(values)
-
+    
+    save_result(user_input, values)
 
 if __name__ == "__main__":
     run()
