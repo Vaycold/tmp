@@ -20,6 +20,7 @@ def route_after_critic(state: AgentState) -> str:
       - REDO_RETRIEVAL  -> meaning_expand -> paper_retrieval
       - REFINE_QUERY    -> query_analysis
       - FINAL ANSWER    -> END
+      - fallback        -> final_response (루프 방지)
     """
     last = state["messages"][-1].content or ""
 
@@ -35,8 +36,8 @@ def route_after_critic(state: AgentState) -> str:
     if "DECISION: REFINE_QUERY" in last:
         return "query_subgraph"
 
-    # 태그가 없다면 보수적으로 query 재정제 쪽으로
-    return "query_subgraph"
+    # 태그 매칭 실패 시 루프 방지를 위해 final_response로 이동
+    return "final_response"
 
 
 def build_graph():

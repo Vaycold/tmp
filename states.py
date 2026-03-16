@@ -141,6 +141,7 @@ class Paper(BaseModel):
     year: int
     authors: List[str] = Field(default_factory=list)
     score_bm25: float = 0.0
+    full_text_sections: dict = Field(default_factory=dict)
 
 
 # =====================================================================
@@ -151,6 +152,8 @@ class LimitationItem(BaseModel):
     paper_id: str
     claim: str
     evidence_quote: str
+    track: str = "author_stated"
+    source_section: str = ""
 
 
 # =====================================================================
@@ -220,6 +223,10 @@ class AgentState(TypedDict):
     keywords: List[str]
     negative_keywords: List[str]
     refined_query: str
+    user_question: str
+    max_iterations: int
+    core_clear_count: int
+    weighted_score: float
 
     # ==================================================================
     # -2- RETRIEVE AGENT
@@ -236,6 +243,7 @@ class AgentState(TypedDict):
     # ==================================================================
     # -5- CRITIC AGENT
     critic: Optional[dict]
+    critic_loop_count: int
 
     # ==================================================================
     # 추후 다시 확인
