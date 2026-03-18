@@ -80,23 +80,51 @@ def _split_sections(full_text: str) -> dict:
 # =====================================================================
 # ArxivLoader full text 로드
 # =====================================================================
+def _extract_arxiv_id(paper: Paper) -> Optional[str]:
+    """paper_id ('arxiv:2401.12345v1') 에서 순수 arXiv ID를 추출."""
+    pid = paper.paper_id or ""
+    # 'arxiv:' 접두사 제거
+    if pid.lower().startswith("arxiv:"):
+        pid = pid[len("arxiv:"):]
+    pid = pid.strip()
+    if not pid:
+        return None
+    # 버전 접미사 제거 (e.g. 'v1', 'v2') — ArxivLoader는 버전 없이도 최신을 가져옴
+    pid = re.sub(r"v\d+$", "", pid)
+    return pid if pid else None
+
+
 def _load_full_text_sections(paper: Paper) -> dict:
     """
     ArxivLoader로 논문 full text 로드 후 섹션 분리.
+    arXiv ID로 직접 조회하여 정확한 논문을 가져온다.
     실패 시 빈 dict 반환 → abstract fallback.
     """
     # 이미 로드된 경우 재사용
     if paper.full_text_sections:
         return paper.full_text_sections
 
+    arxiv_id = _extract_arxiv_id(paper)
+
     try:
         from langchain_community.document_loaders import ArxivLoader
 
-        loader = ArxivLoader(
-            query=paper.title,
-            load_max_docs=1,
-            load_all_available_meta=True,
-        )
+        if arxiv_id:
+            # arXiv ID로 직접 조회 (정확한 논문 매칭)
+            loader = ArxivLoader(
+                query=arxiv_id,
+                load_max_docs=1,
+                load_all_available_meta=True,
+            )
+        else:
+            # arXiv 논문이 아닌 경우 (웹 소스 등) 제목으로 fallback
+            print(f"  [fulltext] arXiv ID 없음, 제목으로 fallback: {paper.title[:50]}")
+            loader = ArxivLoader(
+                query=paper.title,
+                load_max_docs=1,
+                load_all_available_meta=True,
+            )
+
         docs = loader.load()
 
         if not docs:
