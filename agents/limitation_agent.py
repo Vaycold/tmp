@@ -231,6 +231,7 @@ Output ONLY the JSON list. No explanation before or after.
 # =====================================================================
 def limitation_extract_node(state: AgentState) -> AgentState:
     papers_raw = state.get("papers", [])
+    errors = list(state.get("errors", []) or [])
     print(f"  [DEBUG] state['papers'] count: {len(papers_raw)}")
     print(f"  [DEBUG] state['papers'] type: {type(papers_raw)}")
     if papers_raw:
@@ -238,10 +239,12 @@ def limitation_extract_node(state: AgentState) -> AgentState:
         print(f"  [DEBUG] first paper: {papers_raw[0]}")
     if not papers_raw:
         print("  ⚠️ [limitation] papers 없음 → 빈 limitations 반환")
+        errors.append("[limitation_extract] No papers provided")
         return {
             "messages": [AIMessage(content="[]", name="limitation_extract")],
             "sender": "limitation_extract",
             "limitations": [],
+            "errors": errors,
         }
 
     # dict → Paper 객체 변환
@@ -253,17 +256,22 @@ def limitation_extract_node(state: AgentState) -> AgentState:
             try:
                 papers.append(Paper(**p))
             except Exception as e:
+                errors.append(f"[limitation_extract] Paper conversion failed: {e}")
                 print(f"  ⚠️ Paper 변환 실패: {e}")
                 continue
 
     all_limitations = []
     all_messages = []
+    fulltext_fail_count = 0
+    llm_fail_count = 0
 
     for paper in papers:
         print(f"\n  [limitation] 처리 중: {paper.paper_id}")
 
         # full text 로드
         sections = _load_full_text_sections(paper)
+        if not sections:
+            fulltext_fail_count += 1
         time.sleep(0.5)  # ArxivLoader rate limit 대응
 
         # 프롬프트 구성
@@ -279,6 +287,8 @@ def limitation_extract_node(state: AgentState) -> AgentState:
             response = llm.invoke(messages)
             content = response.content if hasattr(response, "content") else str(response)
         except Exception as e:
+            llm_fail_count += 1
+            errors.append(f"[limitation_extract] LLM failed for {paper.paper_id}: {e}")
             print(f"  ⚠️ LLM 호출 실패: {paper.paper_id} ({e})")
             content = "[]"
 
@@ -300,11 +310,18 @@ def limitation_extract_node(state: AgentState) -> AgentState:
                 if lim.claim:
                     all_limitations.append(lim.model_dump())
             except Exception as e:
+                errors.append(f"[limitation_extract] LimitationItem parse failed for {paper.paper_id}: {e}")
                 print(f"  ⚠️ LimitationItem 변환 실패: {e}")
                 continue
 
         all_messages.append(AIMessage(content=content, name="limitation_extract"))
         print(f"  ✓ {paper.paper_id}: {len(parsed)}개 limitation 추출")
+
+    # fulltext/LLM 실패 요약을 errors에 기록
+    if fulltext_fail_count:
+        errors.append(f"[limitation_extract] Full text load failed for {fulltext_fail_count}/{len(papers)} papers (abstract fallback used)")
+    if llm_fail_count:
+        errors.append(f"[limitation_extract] LLM call failed for {llm_fail_count}/{len(papers)} papers")
 
     # 최종 summary 메시지
     summary = AIMessage(
@@ -318,4 +335,5 @@ def limitation_extract_node(state: AgentState) -> AgentState:
         "messages": [summary],
         "sender": "limitation_extract",
         "limitations": all_limitations,
+        "errors": errors,
     }
