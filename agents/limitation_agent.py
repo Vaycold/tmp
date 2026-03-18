@@ -89,6 +89,9 @@ def _extract_arxiv_id(paper: Paper) -> Optional[str]:
     pid = pid.strip()
     if not pid:
         return None
+    # arXiv ID 형식 검증 (YYMM.NNNNN 또는 카테고리/NNNNNNN)
+    if not re.match(r"^(\d{4}\.\d{4,5}|[\w\-]+\.?[\w\-]*/\d{7})", pid):
+        return None
     # 버전 접미사 제거 (e.g. 'v1', 'v2') — ArxivLoader는 버전 없이도 최신을 가져옴
     pid = re.sub(r"v\d+$", "", pid)
     return pid if pid else None
