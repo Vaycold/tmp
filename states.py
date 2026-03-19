@@ -3,7 +3,7 @@ GAPAGO State Definitions
 This module defines the states used at each stage of the research process.
 """
 
-from typing import List, Annotated, Optional
+from typing import List, Annotated, Optional, Literal
 from typing_extensions import TypedDict
 from pydantic import BaseModel, Field
 from langchain_core.messages import BaseMessage, HumanMessage
@@ -20,113 +20,80 @@ import operator
 
 # =====================================================================
 # -1- QUERY AGENT
-class Score(BaseModel):
-    """Evaluate the user question on 5 criteria."""
+#
+# 설계 원칙:
+#   목적: 연구 방향성 → 논문 검색 가능한 쿼리 생성
+#   GAP 분석과 무관. 검색 가능성만 판단.
+#
+# 판정 기준 (SemRank, Zhang et al. EMNLP 2025 기반):
+#   general_topic   : 큰 연구 분야 (이것만 있으면 TOO_BROAD)
+#   specific_phrases: 실제 검색에 쓸 구체적 키워드
+#   → specific_phrases 없음  → TOO_BROAD
+#   → specific_phrases 1개+  → SEARCHABLE
+#   → 조합이 너무 희귀        → TOO_NARROW
+#
+# 상호작용 (CoQuest, Liu et al. CHI 2024 기반):
+#   TOO_BROAD  → breadth-first: 하위 방향 후보 3개 동시 제시
+#   SEARCHABLE → AI Thoughts: 판정 근거 + 키워드 함께 표시
+#   TOO_NARROW → 확장 제안
+# =====================================================================
 
-    score: Annotated[
-        float,
-        Field(
-            ge=0.0,
-            le=1.0,
-            description="Clarity score for a specific evaluation criterion.",
-        ),
-    ]
-    reason: Annotated[
-        str, Field(default="", description="Reason explaining the assigned score.")
-    ]
-    clarifying_question: Annotated[
-        Optional[str],
-        Field(
-            description="Question to clarify missing information for this criterion."
-        ),
-    ]
-
-
-class Scores(BaseModel):
-
-    domain_clarity: Score
-    task_clarity: Score
-    methodology_clarity: Score
-    data_clarity: Score
-    temporal_clarity: Score
-
-
-class ImportanceWeights(BaseModel):
-    """Dynamic Importance Weights for the 5 criteria."""
-
-    domain_clarity: Annotated[
-        float, Field(description="Weight for domain clarity importance.")
-    ] = 0.30
-    task_clarity: Annotated[
-        float, Field(description="Weight for task clarity importance.")
-    ] = 0.25
-    methodology_clarity: Annotated[
-        float, Field(description="Weight for methodology clarity importance.")
-    ] = 0.20
-    data_clarity: Annotated[
-        float, Field(description="Weight for data specification importance.")
-    ] = 0.15
-    temporal_clarity: Annotated[
-        float, Field(description="Weight for temporal scope importance.")
-    ] = 0.10
+class ScopeCandidate(BaseModel):
+    """TOO_BROAD일 때 breadth-first로 제시하는 하위 방향 후보"""
+    direction: str = Field(
+        description="구체적인 하위 연구 방향 (예: '오디오-비주얼 멀티모달 딥페이크 탐지')"
+    )
+    rationale: str = Field(
+        description="이 방향이 검색 가능한 이유 (AI Thoughts)"
+    )
+    sample_keywords: List[str] = Field(
+        default_factory=list,
+        description="이 방향으로 검색 시 사용할 키워드 예시"
+    )
 
 
-class SearchReadiness(BaseModel):
-    """Estimation whether meaningful academic paper retrieval is possible with current information."""
+class ScopeAssessment(BaseModel):
+    """검색 가능성 판정 결과 (SemRank 개념 기반)"""
+    scope_level: Literal["TOO_BROAD", "SEARCHABLE", "TOO_NARROW"] = Field(
+        description="검색 가능성 판정 결과"
+    )
+    general_topic: str = Field(
+        description="연구가 속하는 큰 연구 분야"
+    )
+    specific_phrases: List[str] = Field(
+        default_factory=list,
+        description="검색에 직접 쓸 수 있는 구체적 키워드/구문"
+    )
+    rationale: str = Field(
+        description="판정 근거 (AI Thoughts)"
+    )
+    breadth_candidates: List[ScopeCandidate] = Field(
+        default_factory=list,
+        description="TOO_BROAD일 때만 채움. 하위 방향 3개 (CoQuest breadth-first)"
+    )
+    expansion_suggestion: str = Field(
+        default="",
+        description="TOO_NARROW일 때만 채움. 확장 제안"
+    )
 
-    can_retrieve_meaningful_papers: Annotated[
-        bool,
-        Field(
-            description="Whether the query contains enough information for meaningful paper retrieval."
-        ),
-    ] = False
-    confidence: Annotated[
-        float,
-        Field(
-            ge=0.0,
-            le=1.0,
-            description="Confidence that meaningful retrieval is possible.",
-        ),
-    ] = 0.0
-    reason: Annotated[
-        str,
-        Field(description="Explanation supporting the retrieval readiness decision."),
-    ] = ""
 
-
-class QueryAnalysis(BaseModel):
-    """Evaluation ambiguity and rewriting academic research questions"""
-
-    scores: Annotated[
-        Scores, Field(description="Evaluation scores for each ambiguity criterion.")
-    ]
-    importance_weights: Annotated[
-        ImportanceWeights,
-        Field(description="Dynamic importance weights for each criterion."),
-    ] = ImportanceWeights()
-    search_readiness: Annotated[
-        SearchReadiness, Field(description="Overall evaluation of search readiness.")
-    ] = SearchReadiness()
-    suggested_query: Annotated[
-        str,
-        Field(
-            description="A clear natural-language academic research question inferred from the user question."
-        ),
-    ]
-    keywords: Annotated[
-        List[str],
-        Field(
-            default_factory=list,
-            description="2 to 5 core keywords extracted from the user question for downstream retrieval. Prioritize domain terms, sensor/data terms, and task-defining terms without expansion.",
-        ),
-    ]
-    negative_keywords: Annotated[
-        List[str],
-        Field(
-            default_factory=list,
-            description="Optional exclusion keywords for downstream retrieval.",
-        ),
-    ]
+class QueryResult(BaseModel):
+    """LLM이 생성하는 최종 쿼리 분석 결과"""
+    scope_assessment: ScopeAssessment = Field(
+        description="검색 가능성 판정 결과"
+    )
+    refined_query: str = Field(
+        default="",
+        description="SEARCHABLE인 경우 검색용 자연어 쿼리. 아니면 빈 문자열."
+    )
+    keywords: List[str] = Field(
+        default_factory=list,
+        description="SEARCHABLE인 경우 arXiv 검색 키워드 2~5개."
+    )
+    negative_keywords: List[str] = Field(
+        default_factory=list,
+        description="검색 제외 키워드. 필요한 경우만 1~3개."
+    )
 
 
 # =====================================================================
@@ -161,13 +128,13 @@ class LimitationItem(BaseModel):
 class GapCandidate(BaseModel):
     """Research gap identified from limitations."""
 
-    axis: str  # 축 key
-    axis_label: str = ""  # 축 한글/영문 레이블
-    axis_type: str = "fixed"  # "fixed" | "dynamic"
-    gap_statement: str  # 핵심 GAP 1문장 요약
-    elaboration: str = ""  # GAP 상세 설명 (2~3문장)
-    proposed_topic: str = ""  # 제안 연구 주제
-    repeat_count: int = 0  # 반복 등장 논문 수
+    axis: str
+    axis_label: str = ""
+    axis_type: str = "fixed"
+    gap_statement: str
+    elaboration: str = ""
+    proposed_topic: str = ""
+    repeat_count: int = 0
     supporting_papers: List[str] = Field(default_factory=list)
     supporting_quotes: List[str] = Field(default_factory=list)
 
@@ -200,12 +167,8 @@ class EvaluationResult(BaseModel):
 
 
 # =====================================================================
-
-
-# =====================================================================
 # ========================= State Definitions =========================
 # =====================================================================
-
 
 class AgentState(TypedDict):
     # ==================================================================
@@ -217,16 +180,22 @@ class AgentState(TypedDict):
     # ==================================================================
     # -1- QUERY AGENT
     iteration: int
-    is_ambiguous: bool
-    clarify_questions: List[str]
+    max_iterations: int
 
+    # 검색 가능성 판정 결과
+    scope_level: str                    # TOO_BROAD / SEARCHABLE / TOO_NARROW
+    scope_rationale: str                # 판정 근거 (AI Thoughts)
+    breadth_candidates: List[dict]      # TOO_BROAD일 때 후보 3개
+    expansion_suggestion: str           # TOO_NARROW일 때 확장 제안
+
+    # 확정된 검색 정보 (SEARCHABLE 확정 후)
     keywords: List[str]
     negative_keywords: List[str]
     refined_query: str
     user_question: str
-    max_iterations: int
-    core_clear_count: int
-    weighted_score: float
+
+    # 진행 제어
+    needs_user_input: bool              # True면 human_clarify로 분기
 
     # ==================================================================
     # -2- RETRIEVE AGENT
@@ -245,9 +214,4 @@ class AgentState(TypedDict):
     critic: Optional[dict]
     critic_loop_count: int
 
-    # ==================================================================
-    # 추후 다시 확인
-    # iteration: int
-    # max_iterations: int
-    # errors: List[str]
     trace: dict

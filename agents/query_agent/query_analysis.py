@@ -1,311 +1,224 @@
 """
-================================================== 1. QUERY ANALYSIS ==================================================
-- 역할
-1. 사용자 질문의 모호성(ambiguity) 평가
-2. 논문 검색이 가능한 수준인지 판단
-3. 모호하면 사용자에게 보완 질문을 던질 수 있게 상태를 반환
--> 즉, 5사지 축에 따라 사용자 질문을 평가하고, 지금 바로 검색해도 되는가?를 판단하는 노드
-=======================================================================================================================
+================================================== QUERY ANALYSIS (v3) ==================================================
 
+[설계 원칙]
+목적: 사용자의 연구 방향성을 받아 논문 검색이 가능한 쿼리를 만든다.
+     GAP 분석과 무관. 검색 가능성만 판단.
+
+[적용 논문]
+
+① SemRank (Zhang et al., EMNLP 2025 | arXiv:2505.21815)
+   논문 근거:
+     "Each paper is indexed using multi-granular scientific concepts,
+      including general research topics and detailed key phrases."
+     "broad topics aim to cover overall themes not explicitly mentioned
+      such as 'natural language generation' and 'automatic evaluation',
+      while key phrases capture detailed information specific to the paper."
+   코드 반영:
+     - ScopeAssessment.general_topic   : 큰 연구 분야 (이것만 있으면 TOO_BROAD)
+     - ScopeAssessment.specific_phrases: 실제 검색에 쓸 구체적 키워드
+     - specific_phrases 없음 → TOO_BROAD
+     - specific_phrases 1개 이상 → SEARCHABLE
+
+② CoQuest (Liu et al., CHI 2024 | arXiv:2310.06155)
+   논문 근거:
+     "breadth-first design made users feel more creative and gained
+      more trust from users"
+     "AI Thoughts: explaining AI's rationale of why each RQ is generated"
+     "Refine and Re-scope" 단계가 Human-AI co-creation의 핵심
+   코드 반영:
+     - TOO_BROAD  → breadth_candidates 3개 동시 제시 (breadth-first)
+     - SEARCHABLE → rationale 함께 출력 (AI Thoughts)
+     - 사용자 확인 후 Re-scope 루프 (Human-in-the-loop)
+=========================================================================================================================
 """
 
-from langchain_core.messages import (
-    HumanMessage,
-    AIMessage,
-    BaseMessage,
-    SystemMessage,
-)  # 랭체인 메시지 객체(사용자, 모델, 공통 부모 타입)
-from states import AgentState  # 랭그래프 노드가 입력받고 출력하는 공용 상태 스키마
+import json
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from states import AgentState, QueryResult
 from llm import get_llm
-from tools import build_role_tools
-from prompts.system import make_system_prompt
-import re
-
-from states import QueryAnalysis, ImportanceWeights
 
 llm = get_llm()
 
 # =====================================================================================================================
-# ==================================================== 0) 초기 설정 ====================================================
+# 0) 시스템 프롬프트
 # =====================================================================================================================
 
-ROLE_TOOLS = build_role_tools()
-QUERY_TOOLS = ROLE_TOOLS["QUERY_TOOLS"]
+SYSTEM_PROMPT = """You are a Query Analysis Agent for an academic paper search system.
 
-# 모호성 판정 기준
-CLEAR_MIN_SCORE: float = (
-    0.4  # 각 항목 점수가 최소 이 값 이상이면, “완전히 없는 건 아니다” 정도로 보는 기준
-)
-CORE_SLOT_MIN_COUNT: int = (
-    1  # 태스크, 방법론, 데이터 중 몇 개 이상은 어느 정도 채워져 있어야 하는지 보는 기준
-)
-QUESTION_SCORE_THRESHOLD: float = (
-    0.6  # 이 값보다 낮으면 추가 질문을 생성할 대상으로 보는 기준
-)
-WEIGHTED_SCORE_THRESHOLD: float = 0.6  # 전체 가중 점수의 하한선
-SEARCH_CONFIDENCE_THRESHOLD: float = (
-    0.5  # “현재 정보로 검색 의미가 있다”는 신뢰도가 이 값보다 낮으면 모호하다고 보는 기준
-)
+Your ONLY job: determine if a user's research direction can be used to search for academic papers on arXiv.
+You do NOT care about research design, methodology choices, or GAP analysis suitability.
+You ONLY care: "Can we search for papers with this input?"
 
-DEFAULT_WEIGHTS = {
-    "domain_clarity": 0.30,  # 도메인 (30%)
-    "task_clarity": 0.25,  # 태스크 (25%)
-    "methodology_clarity": 0.20,  # 방법론 (20%)
-    "data_clarity": 0.15,  # 데이터 (15%)
-    "temporal_clarity": 0.10,  # 기간 (10%)
-}
+=== SCOPE ASSESSMENT (based on SemRank, Zhang et al. EMNLP 2025) ===
 
-CRITERIA_KEYS = [
-    "domain_clarity",
-    "task_clarity",
-    "methodology_clarity",
-    "data_clarity",
-    "temporal_clarity",
-]
+Classify the input into ONE of three levels:
 
-CRITERIA_META = {
-    "domain_clarity": {
-        "label": "도메인(산업군)",
-        "example": "예: 금융, 의료, 자동차 제조 등",
-    },
-    "task_clarity": {
-        "label": "태스크(해결 문제)",
-        "example": "예: 이상 징후 탐지, 수요 예측, 텍스트 요약 등",
-    },
-    "methodology_clarity": {
-        "label": "방법론(기술)",
-        "example": "예: 트랜스포머, 강화학습, 도메인 적응 등",
-    },
-    "data_clarity": {
-        "label": "데이터 유형",
-        "example": "예: 센서 데이터, 이미지/영상 데이터 등",
-    },
-    "temporal_clarity": {
-        "label": "연구 기간",
-        "example": "예: 최근 3년 이내, 2020년 이후 등",
-    },
-}
+1. TOO_BROAD
+   - Only a general research field is mentioned, no specific concept
+   - Examples: "natural language processing", "computer vision", "deep learning", "AI"
+   - Expected arXiv results: hundreds of thousands → meaningful search impossible
+
+2. SEARCHABLE
+   - At least one specific phrase/concept that can directly retrieve papers
+   - Examples: "deepfake detection", "medical image segmentation", "multimodal emotion recognition"
+   - Expected arXiv results: hundreds to thousands → proceed
+
+3. TOO_NARROW
+   - The combination of specific phrases is too unusual → almost no papers exist
+   - Examples: "quantum computing for Korean hate speech detection"
+   - Expected arXiv results: near zero
+
+=== CLASSIFICATION RULE ===
+
+Extract from the input:
+  general_topic   : The broad research field (e.g., "deepfake detection")
+  specific_phrases: Concrete keywords directly usable for arXiv search
+
+Decision:
+  - specific_phrases is EMPTY                        → TOO_BROAD
+  - specific_phrases has 1+ entries                  → SEARCHABLE
+  - specific_phrases exist but combination too rare  → TOO_NARROW
+
+=== OUTPUT BY LEVEL ===
+
+TOO_BROAD:
+  - breadth_candidates: exactly 3 sub-directions (each SEARCHABLE level)
+    Each: direction (str), rationale (why searchable), sample_keywords (list)
+  - rationale: why the input is too broad
+
+SEARCHABLE:
+  - refined_query: clean academic search query preserving user intent
+  - keywords: 2~5 arXiv search keywords (NO generic: AI, model, system, method)
+  - negative_keywords: only if clearly needed (1~3 max)
+  - rationale: why searchable (AI Thoughts)
+  - breadth_candidates: leave EMPTY
+
+TOO_NARROW:
+  - expansion_suggestion: why almost no papers exist + broader angle suggestion
+  - rationale: explanation
+  - refined_query, keywords: leave EMPTY
+
+=== LANGUAGE ===
+Match the language of the user's input.
+Korean input → all text fields in Korean. Keywords always in English.
+"""
+
 
 # =====================================================================================================================
-# =============================================== 1) 서브 함수 정의 =====================================================
+# 1) 헬퍼 함수
 # =====================================================================================================================
 
-
-def _normalize_weights(raw_weights: ImportanceWeights | None) -> dict[str, float]:
-    if raw_weights is None:
-        raw_dict = DEFAULT_WEIGHTS.copy()
-    else:
-        raw_dict = raw_weights.model_dump()
-
-    cleaned = {
-        key: max(0.0, float(raw_dict.get(key, DEFAULT_WEIGHTS[key])))
-        for key in CRITERIA_KEYS
-    }
-
-    total = sum(cleaned.values())
-    if total <= 1e-9:
-        return DEFAULT_WEIGHTS.copy()
-
-    return {k: v / total for k, v in cleaned.items()}
-
-
-def _build_clarification_message(
-    clarify_questions: list[str],
-    scores: object,
-) -> str:
-    weak_areas_info = []
-    # 부족한 영역을 찾고 예시와 함께 정리
-    for key in CRITERIA_KEYS:
-        item = getattr(scores, key, None)
-        if item is not None and item.score < QUESTION_SCORE_THRESHOLD:
-            label = CRITERIA_META[key]["label"]
-            example = CRITERIA_META[key]["example"]
-            weak_areas_info.append(f"- {label}: {example}")
-
-    # 인트로 문구
-    intro = "네, 제안해주신 주제로 논문을 찾아보고 있습니다! 다만, 조금 더 구체적인 정보를 주시면 훨씬 정확한 검색 결과를 드릴 수 있을 것 같아요."
-
-    if weak_areas_info:
-        guide_section = "\n구체적으로 아래와 같은 정보들이 부족합니다:\n" + "\n".join(
-            weak_areas_info
-        )
-    else:
-        guide_section = ""
-
-    # 질문 목록 구성
-    if clarify_questions:
-        qs = "\n".join(f"{i}. {q}" for i, q in enumerate(clarify_questions[:3], 1))
-        message = (
-            f"{intro}\n"
-            f"{guide_section}\n\n"
-            f"아래 질문에 대한 답을 포함해주시면 좋습니다:\n{qs}\n\n"
-            "조금 더 자세한 질문을 해주시면 바로 조사를 시작할게요!"
-        )
-        return message
-
-    # Fallback (질문이 없을 경우 기본 가이드)
-    return (
-        f"{intro}\n"
-        "예를 들어, 어떤 산업 분야인지, 어떤 데이터나 기술에 관심이 있는지 조금만 더 자세히 말씀해 주시겠어요?\n"
-        "알려주시는 내용에 맞춰 최적의 논문들을 정리해 드릴게요."
+def _collect_user_input(state: AgentState) -> str:
+    """누적된 HumanMessage를 하나로 합산"""
+    return "\n".join(
+        m.content.strip()
+        for m in state["messages"]
+        if isinstance(m, HumanMessage)
     )
 
 
+def _build_scope_message(result: QueryResult) -> str:
+    """
+    판정 결과 → 사용자에게 보여줄 메시지
+    - TOO_BROAD  : CoQuest breadth-first — 후보 3개 동시 제시
+    - SEARCHABLE : CoQuest AI Thoughts  — 근거 + 키워드 표시
+    - TOO_NARROW : 확장 제안
+    """
+    sa = result.scope_assessment
+    level = sa.scope_level
+
+    if level == "TOO_BROAD":
+        lines = [
+            "입력하신 연구 방향이 너무 넓어서 논문 검색이 어렵습니다.",
+            f"\n[판정 근거] {sa.rationale}",
+            "\n아래 세 가지 방향 중 하나를 선택하시거나, 원하는 방향을 직접 입력해주세요:\n",
+        ]
+        for i, cand in enumerate(sa.breadth_candidates, 1):
+            lines.append(f"  {i}. {cand.direction}")
+            lines.append(f"     └ {cand.rationale}")
+            if cand.sample_keywords:
+                lines.append(f"     └ 예상 키워드: {', '.join(cand.sample_keywords)}")
+            lines.append("")
+        return "\n".join(lines)
+
+    elif level == "TOO_NARROW":
+        return "\n".join([
+            "입력하신 방향은 관련 논문이 거의 없을 것으로 예상됩니다.",
+            f"\n[판정 근거] {sa.rationale}",
+            f"\n[제안] {sa.expansion_suggestion}",
+            "\n방향을 조금 더 넓혀서 다시 입력해주시겠어요?",
+        ])
+
+    else:  # SEARCHABLE
+        lines = [
+            "입력하신 방향으로 논문 검색이 가능합니다.",
+            f"\n[판정 근거] {sa.rationale}",
+            f"\n[검색 쿼리] {result.refined_query}",
+            f"[검색 키워드] {', '.join(result.keywords)}",
+        ]
+        if result.negative_keywords:
+            lines.append(f"[제외 키워드] {', '.join(result.negative_keywords)}")
+        lines.append(
+            "\n이 방향으로 논문 검색을 시작할까요? "
+            "(계속하려면 Enter, 수정하려면 다른 방향을 입력해주세요)"
+        )
+        return "\n".join(lines)
+
+
 # =====================================================================================================================
-# =============================================== 2) 에이전트(노드) 생성 =================================================
+# 2) 노드 함수
 # =====================================================================================================================
-
-system_prompt = make_system_prompt(
-    "ROLE: Query Analysis Agent\n"
-    "You evaluate ambiguity and rewrite academic research questions.\n\n"
-    "Your tasks:\n"
-    "1) Evaluate the user question on 5 criteria with following definitions:\n"
-    "   - domain_clarity: Identification of specific industry sectors or application sector (e.g., Finance, Healthcare).\n"
-    "   - task_clarity: Specificity of the problem to be solved (e.g., anomaly detection, forecasting, generation).\n"
-    "   - methodology_clarity: Mention of specific techniques, algorithms, or architectures (e.g., UDA, Transformers, RL).\n"
-    "   - data_clarity: Specification of data modalities or datasets (e.g., EHR, sensor logs, molecular graphs).\n"
-    "   - temporal_clarity: Mention of time constraints or focus on recent work (e.g., since 2020, last 5 years).\n"
-    "2) Use reasoning first, then assign scores conservatively.\n"
-    "3) Estimate whether meaningful academic paper retrieval is possible with current information.\n"
-    "4) Suggest dynamic importance weights for the 5 criteria.\n"
-    "5) Suggest a keyword for academic search query.\n"
-    "6) If the question is ambiguous, ask concise clarifying questions.\n\n"
-    "Scoring guidance (Anchor Points):\n"
-    "- 0.0: No mention at all. Information is completely missing.\n"
-    "- 0.2: Extremely vague or generic (e.g., 'something', 'research', 'data').\n"
-    "- 0.4: Mentioned but broad/underspecified (e.g., just 'medical', 'prediction', 'AI'). The category is known but context is missing.\n"
-    "- 0.6: Partial clarity with some context (e.g., 'clinical drug prediction', 'transformer-based models'). Provides a general direction.\n"
-    "- 0.8: High clarity with specific details (e.g., 'adverse event prediction for cancer drugs', 'adversarial domain adaptation'). Clear enough for effective search.\n"
-    "- 1.0: Perfect clarity with specific instances/constraints (e.g., 'Toxicity prediction using ImageNet-pretrained ResNet since 2022').\n\n"
-    "Scoring Rules:\n"
-    "- Be conservative: If information is halfway between 0.4 and 0.6, pick 0.4.\n"
-    "- Do not infer unstated details: Only score based on text explicitly provided by the user.\n"
-    "- Methodological paradigms (e.g., 'transfer learning', 'GAN') should be scored at least 0.7 for methodology_clarity.\n"
-    "- If a concept is mentioned but you need to ask a 'Which one?' question, it should not exceed 0.6.\n\n"
-    "Suggested keyword guideline:\n"
-    "- suggested_keword: write it as a natural academic research question.\n"
-    "- Keep the original user intent while making the question clearer and more specific.\n\n"
-    "Keyword extraction guideline:\n"
-    "- Extract 2 to 5 concise keywords or short phrases only.\n"
-    "- Build keywords directly from the user answer without expansion.\n"
-    "- Prioritize domain terms, task-defining terms, and important data or sensor terms.\n"
-    "- Good examples: PMSM fault diagnosis, vibration sensor, urban airflow, battery health.\n"
-    "- Avoid generic terms such as AI, model, system, study unless they are the actual core concept.\n"
-    "- negative_keywords: include 1 to 3 short exclusion terms only when explicit exclusion is useful; otherwise return an empty list.\n"
-    "- Do not include full sentences and do not expand synonyms.\n\n"
-    "Importance weight constraints:\n"
-    "- All weights must be positive real numbers (>= 0).\n"
-    "- The sum of all weights must equal exactly 1.0.\n"
-    "- Do not omit any weight.\n"
-)
-
-structured_llm = llm.with_structured_output(QueryAnalysis)
-
 
 def query_analysis_node(state: AgentState) -> AgentState:
+    """
+    Query Analysis 메인 노드
+
+    1. 사용자 입력 수집
+    2. LLM → Scope Assessment (SemRank 기준)
+    3. 판정 메시지 생성 (CoQuest 방식)
+    4. SEARCHABLE → keywords 확정 / 아니면 사용자 입력 대기
+    """
     it = state.get("iteration", 0) + 1
     max_it = state.get("max_iterations", 3)
 
-    # 입력값 방식 1) 누적된 HumanMessage 만
-    user_inputs = [
-        m.content.strip() for m in state["messages"] if isinstance(m, HumanMessage)
+    user_input = _collect_user_input(state)
+
+    structured_llm = llm.with_structured_output(QueryResult)
+    result: QueryResult = structured_llm.invoke([
+        SystemMessage(content=SYSTEM_PROMPT),
+        HumanMessage(content=user_input),
+    ])
+    sa = result.scope_assessment
+
+    scope_msg = _build_scope_message(result)
+    out_messages = [
+        AIMessage(
+            content=json.dumps(result.model_dump(), ensure_ascii=False),
+            name="query_analysis",
+        ),
+        AIMessage(content=scope_msg, name="scope_prompt"),
     ]
-    combined_user_input = "\n".join(user_inputs)
-    input_messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=combined_user_input),
-    ]
-    # 입력값 방식 2) 누적된 모든 Message
-    # messages = [SystemMessage(content=system_prompt), *state["messages"]]
 
-    parsed: QueryAnalysis = structured_llm.invoke(input_messages)
-
-    # 1. 각 축의 모호성 가중 점수 계산
-    dynamic_weights = _normalize_weights(parsed.importance_weights)
-    weighted_score = sum(
-        getattr(parsed.scores, key).score * dynamic_weights.get(key, 0.0)
-        for key in CRITERIA_KEYS
-    )  # 각축의 평균 score 점수
-
-    # 2. 도메인 최소 조건 (>0.4)
-    ## 도메인이 최소 수준이라도 언급되었는지 봄
-    domain_score = parsed.scores.domain_clarity.score
-    domain_ok = domain_score >= CLEAR_MIN_SCORE
-
-    # 3. 핵심 슬롯 수 계산
-    ## 무엇을 하려는지(task), 어떤 접근인지(methodology), 어떤 데이터인지(data) 핵심 슬롯 3개 중 몇 개가 최소 수준 이상인지 count
-    core_slots = ["task_clarity", "methodology_clarity", "data_clarity"]
-    core_clear_count = sum(
-        1 for key in core_slots if getattr(parsed.scores, key).score >= CLEAR_MIN_SCORE
-    )
-
-    # 4. 최종 모호성 판정
-    hard_fail = not domain_ok  # 도메인이 없으면 바로 실패
-    soft_fail = (
-        core_clear_count < CORE_SLOT_MIN_COUNT  # 핵심 슬롯이 1개 미만이면 부족
-        or weighted_score
-        < WEIGHTED_SCORE_THRESHOLD  # 전체 질문 품질이 너무 낮으면 부족
-        or not parsed.search_readiness.can_retrieve_meaningful_papers  # LLM이 “의미 있는 논문 검색 어렵다”고 판단하면 부족
-        or (
-            parsed.search_readiness.confidence < SEARCH_CONFIDENCE_THRESHOLD
-            and weighted_score < WEIGHTED_SCORE_THRESHOLD
-        )  # confidence가 낮더라도 weighted score가 충분히 높으면 너무 엄격하게 ambiguity 처리하지 않음
-    )
-    is_ambiguous = (hard_fail or soft_fail) and (it < max_it)
-
-    # 5. retrieval-ready keyword state 구성
-    keywords = [kw.strip() for kw in (parsed.keywords or []) if isinstance(kw, str) and kw.strip()][:3]
-    negative_keywords = [kw.strip() for kw in (parsed.negative_keywords or []) if isinstance(kw, str) and kw.strip()][:3]
-
-    # fallback: keyword가 비어 있으면 suggested_query에서 짧은 핵심 단어만 보완
-    if not keywords and parsed.suggested_query:
-        fallback = re.split(r"[,/;]| and | or ", parsed.suggested_query)
-        keywords = [x.strip() for x in fallback if isinstance(x, str) and x.strip()][:3]
-
-    # 6. 결과 메시지 구성
-    analysis_content = parsed.model_dump_json()
-    messages = [AIMessage(content=analysis_content, name="query_analysis")]
-
-    clarify_questions = []
-    if is_ambiguous:
-        # 모호할 때만 질문 수집
-        seen = set()
-        for key in CRITERIA_KEYS:
-            item = getattr(parsed.scores, key)
-            if item.score < QUESTION_SCORE_THRESHOLD and item.clarifying_question:
-                q = item.clarifying_question.strip()
-                if q not in seen:
-                    seen.add(q)
-                    clarify_questions.append(q)
-
-        # 모호할 때만 안내 메시지 추가
-        clarification_text = _build_clarification_message(
-            clarify_questions, parsed.scores  # .model_dump()
-        )
-        messages.append(AIMessage(content=clarification_text, name="clarify_prompt"))
+    is_searchable = (sa.scope_level == "SEARCHABLE")
+    needs_user_input = (not is_searchable) and (it < max_it)
 
     return {
-        "messages": messages,
+        "messages": out_messages,
         "sender": "query_analysis",
         "iteration": it,
-        "is_ambiguous": is_ambiguous,
-        "clarify_questions": clarify_questions,
-        "keywords": keywords,
-        "negative_keywords": negative_keywords,
-        "core_clear_count": core_clear_count,
-        "weighted_score": weighted_score,
-        "refined_query": parsed.suggested_query,  # ← 이게 없으면 query_refinement에서 보존할 값이 없음
-        "user_question": combined_user_input,
+        "scope_level": sa.scope_level,
+        "scope_rationale": sa.rationale,
+        "breadth_candidates": [c.model_dump() for c in sa.breadth_candidates],
+        "expansion_suggestion": sa.expansion_suggestion,
+        "keywords": result.keywords if is_searchable else [],
+        "negative_keywords": result.negative_keywords if is_searchable else [],
+        "refined_query": result.refined_query if is_searchable else "",
+        "user_question": user_input,
+        "needs_user_input": needs_user_input,
     }
 
 
 def human_clarify_node(state: AgentState) -> AgentState:
-    """
-    Interrupt 전용 노드
-    여기서는 LLM 호출/자동 응답 생성하지 않음
-    UI/CLI에서 snapshot을 보고 사용자 입력을 받은 뒤 app.update_state로 아래 필드를 채움:
-      - query_approved: bool
-      - (optional) refined_query or user feedback message
-    """
-    # 아무것도 변경하지 않아도 됨 (interrupt로 멈출 것)
+    """Human-in-the-loop interrupt 전용 노드"""
     return {"sender": "human_clarify"}

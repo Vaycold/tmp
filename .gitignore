@@ -89,7 +89,7 @@ docker-data/
 .coverage
 htmlcov/
 .pytest_cache/
-
+main2.py
 # =========================
 # 기타
 # =========================

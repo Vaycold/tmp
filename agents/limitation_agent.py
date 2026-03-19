@@ -13,7 +13,6 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from states import AgentState, Paper, LimitationItem
 from llm import get_llm
-from utils.parse_json import parse_json
 
 llm = get_llm()
 
@@ -272,70 +271,46 @@ def _build_prompt(paper: Paper, sections: dict) -> str:
         "",
     ]
 
-    if use_fallback:
-        lines += [
-            "## FALLBACK: Abstract Only",
-            paper.abstract,
-        ]
-    else:
-        if track1:
-            lines.append("## Track 1: Author-Stated Sections")
-            for k, v in track1.items():
-                lines += [f"### [{k.upper()}]", v, ""]
+ROLE_TOOLS = build_role_tools()
+LIMITATION_TOOLS = ROLE_TOOLS["LIMITATION_TOOLS"]
 
-        if track2:
-            lines.append("## Track 2: Structural Analysis Sections")
-            for k, v in track2.items():
-                lines += [f"### [{k.upper()}]", v, ""]
+limitation_extract_agent = create_agent(
+    llm,
+    tools=LIMITATION_TOOLS,
+    system_prompt=make_system_prompt(
+        "ROLE: Limitation Extract Agent\n"
+        "You extract limitation/future-work statements from retrieved papers/snippets.\n"
+        "RULES:\n"
+        "1. Process ALL papers in the input without exception.\n"
+        "2. Extract 1-2 key limitations per paper. No more, no less.\n"
+        "3. Each limitation MUST include:\n"
+        "   - paper_id: the paper's unique identifier\n"
+        "   - claim: a brief limitation statement (1-2 sentences)\n"
+        "   - evidence_quote: an exact quote from the provided text sections\n"
+        "4. Do NOT infer or assume limitations not stated in the text.\n"
+        "5. Do NOT skip any paper even if the abstract is short or unclear.\n"
+        "6. Do NOT infer gaps yet.\n\n"
 
-    return "\n".join(lines)
+        "SECTION PRIORITY (high to low):\n"
+        "  1. INTRODUCTION  — author-defined gaps, most reliable\n"
+        "  2. CONCLUSION    — key contributions + limitations\n"
+        "  3. LIMITATIONS   — author-stated weaknesses\n"
+        "  4. DISCUSSION    — result interpretation + limitations\n"
+        "  5. ABSTRACT      — fallback only, least detail\n"
+        "  6. FUTURE_WORK   — supplementary evidence only\n\n"
 
-
-SYSTEM_PROMPT = """ROLE: Limitation Extract Agent
-
-You extract research limitations from academic papers using a 2-track approach.
-
-## Track 1: Author-Stated Limitations
-Sections: conclusion, limitations, future_work
-→ Extract what the authors explicitly admit as limitations or future work.
-→ Be critical: authors often write defensively. Note if a stated "future work" is actually avoiding a limitation.
-
-## Track 2: Structural Limitations
-Sections: introduction, method, experiment, discussion
-→ Identify limitations NOT explicitly stated by authors but revealed by:
-  - Narrow assumptions in the method (e.g., "we assume i.i.d. data")
-  - Limited datasets or evaluation scope (e.g., single domain, small scale)
-  - Missing baselines or comparisons
-  - Scope restrictions mentioned in introduction
-
-## Rules
-1. Extract 1-3 limitations per paper. Prioritize Track 2 structural findings.
-2. Each limitation MUST include:
-   - claim: concise limitation statement (1-2 sentences)
-   - evidence_quote: exact short quote from the provided text
-   - track: "author_stated" or "structural"
-   - source_section: section name (e.g., "conclusion", "method", "experiment")
-3. Do NOT infer gaps. Only extract limitations from the provided text.
-4. If only abstract is provided (FALLBACK), extract 1 limitation maximum.
-
-## Output Format (strictly JSON list)
-[
-  {
-    "paper_id": "<id>",
-    "claim": "<limitation statement>",
-    "evidence_quote": "<exact short quote>",
-    "track": "author_stated" or "structural",
-    "source_section": "<section name>"
-  },
-  ...
-]
-Output ONLY the JSON list. No explanation before or after.
-"""
+        "OUTPUT FORMAT (strictly follow):\n"
+        "paper_id: <id>\n"
+        "  - claim: <limitation statement>\n"
+        "    evidence_quote: <exact quote from paper>\n"
+        "  - claim: <limitation statement>\n"
+        "    evidence_quote: <exact quote from paper>\n"
+        "Output be structured: paper_id -> [limitation_sentences], plus brief rationale.\n"
+        "Do NOT infer gaps yet.\n"
+    ),
+)
 
 
-# =====================================================================
-# limitation_extract_node
-# =====================================================================
 def limitation_extract_node(state: AgentState) -> AgentState:
     papers_raw = state.get("papers", [])
     errors = list(state.get("errors", []) or [])

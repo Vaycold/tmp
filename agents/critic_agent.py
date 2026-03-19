@@ -40,7 +40,7 @@ IMPORTANT:
 - You MUST output exactly one DECISION tag.
 - Do NOT generate new gaps, topics, or suggestions.
 - Do NOT omit the DECISION tag.
-"""
+""" 
 
 
 def critic_score_node(state: AgentState) -> AgentState:
