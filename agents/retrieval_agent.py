@@ -183,7 +183,8 @@ def paper_retrieval_node(state: AgentState) -> AgentState:
     if not raw_papers:
         raw_papers = _parse_papers_from_ai_message(last_content)
 
-    print(f"  [DEBUG] raw_papers count: {len(raw_papers)}")
+    raw_papers = _dedupe_papers(raw_papers)
+    print(f"  [DEBUG] raw_papers count (after dedup): {len(raw_papers)}")
 
     # ✅ BM25 랭킹
     query = state.get("refined_query") or state.get("user_question", "")
