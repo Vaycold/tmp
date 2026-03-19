@@ -10,14 +10,14 @@ def parse_json(text: str) -> dict | list:
         text: Raw LLM response
 
     Returns:
-        Parsed JSON dict
+        Parsed JSON (dict or list)
     """
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
 
-    # Try extracting from code blocks (object or array)
+    # Try extracting from code blocks (dict or array)
     json_match = re.search(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", text, re.DOTALL)
     if json_match:
         try:

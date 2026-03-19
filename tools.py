@@ -32,7 +32,8 @@ _SCIENCEON_TOKEN_CACHE: dict[str, Optional[str]] = {
 
 
 def _norm(text: str) -> str:
-    return re.sub(r"\s+", " ", (text or "")).strip()
+    text = re.sub(r"<[^>]+>", " ", text or "")
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _tokenize(text: str) -> list[str]:

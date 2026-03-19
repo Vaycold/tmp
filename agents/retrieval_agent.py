@@ -183,7 +183,8 @@ def paper_retrieval_node(state: AgentState) -> AgentState:
     if not raw_papers:
         raw_papers = _parse_papers_from_ai_message(last_content)
 
-    print(f"  [DEBUG] raw_papers count: {len(raw_papers)}")
+    raw_papers = _dedupe_papers(raw_papers)
+    print(f"  [DEBUG] raw_papers count (after dedup): {len(raw_papers)}")
 
     # ✅ BM25 랭킹
     query = state.get("refined_query") or state.get("user_question", "")
@@ -197,6 +198,10 @@ def paper_retrieval_node(state: AgentState) -> AgentState:
         if not p.get("title") or not p.get("paper_id"):
             continue
         try:
+            # ScienceON 등 외부 소스의 doi를 full_text_sections에 보존
+            fts = dict(p.get("full_text_sections") or {})
+            if p.get("doi") and "doi" not in fts:
+                fts["doi"] = p["doi"]
             papers.append(Paper(
                 paper_id=p.get("paper_id", ""),
                 title=p.get("title", ""),
@@ -205,7 +210,7 @@ def paper_retrieval_node(state: AgentState) -> AgentState:
                 year=p.get("year", 0) or 0,
                 authors=p.get("authors") or [],
                 score_bm25=p.get("score_bm25", 0.0),
-                full_text_sections=p.get("full_text_sections") or {},
+                full_text_sections=fts,
             ))
         except Exception as e:
             print(f"  ⚠️ Paper 변환 실패: {e}")

@@ -103,7 +103,7 @@ pydantic==2.12.5
 pydantic-settings==2.13.1
 pydantic_core==2.41.5
 Pygments==2.19.2
-PyMuPDF==1.24.5
+PyMuPDF==1.24.3
 PyMuPDFb==1.24.3
 pyparsing==3.3.2
 python-dateutil==2.9.0.post0

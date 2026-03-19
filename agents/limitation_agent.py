@@ -5,6 +5,9 @@ import re
 import time
 from typing import Optional
 
+import requests
+import fitz
+
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -78,37 +81,172 @@ def _split_sections(full_text: str) -> dict:
 
 
 # =====================================================================
-# ArxivLoader full text 로드
+# Full text 로드 (소스별 분기)
 # =====================================================================
-def _load_full_text_sections(paper: Paper) -> dict:
-    """
-    ArxivLoader로 논문 full text 로드 후 섹션 분리.
-    실패 시 빈 dict 반환 → abstract fallback.
-    """
-    # 이미 로드된 경우 재사용
-    if paper.full_text_sections:
-        return paper.full_text_sections
+_REQUEST_HEADERS = {"User-Agent": "GAPAGO-Research-Agent/1.0"}
 
+
+def _extract_arxiv_id(paper: Paper) -> Optional[str]:
+    """paper_id ('arxiv:2401.12345v1') 에서 순수 arXiv ID를 추출."""
+    pid = paper.paper_id or ""
+    if pid.lower().startswith("arxiv:"):
+        pid = pid[len("arxiv:"):]
+    pid = pid.strip()
+    if not pid:
+        return None
+    if not re.match(r"^(\d{4}\.\d{4,5}|[\w\-]+\.?[\w\-]*/\d{7})", pid):
+        return None
+    pid = re.sub(r"v\d+$", "", pid)
+    return pid if pid else None
+
+
+def _load_arxiv_full_text(paper: Paper) -> dict:
+    """arXiv 논문 full text 로드 (ArxivLoader 사용)."""
+    arxiv_id = _extract_arxiv_id(paper)
     try:
         from langchain_community.document_loaders import ArxivLoader
 
-        loader = ArxivLoader(
-            query=paper.title,
-            load_max_docs=1,
-            load_all_available_meta=True,
-        )
-        docs = loader.load()
+        if arxiv_id:
+            loader = ArxivLoader(query=arxiv_id, load_max_docs=1, load_all_available_meta=True)
+        else:
+            return {}
 
+        docs = loader.load()
         if not docs:
             return {}
 
         sections = _split_sections(docs[0].page_content)
-        print(f"  [fulltext] '{paper.title[:50]}' → {list(sections.keys())}")
+        print(f"  [fulltext:arxiv] '{paper.title[:50]}' → {list(sections.keys())}")
         return sections
 
     except Exception as e:
-        print(f"  [fulltext] 로드 실패: {paper.title[:50]} ({e})")
+        print(f"  [fulltext:arxiv] 로드 실패: {paper.title[:50]} ({e})")
         return {}
+
+
+def _extract_text_from_pdf_bytes(pdf_bytes: bytes) -> str:
+    """PyMuPDF로 PDF 바이트에서 텍스트 추출."""
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    text = ""
+    for page in doc:
+        text += page.get_text()
+    doc.close()
+    return text
+
+
+def _find_pdf_url_from_doi(doi: str) -> Optional[str]:
+    """DOI 페이지에 접근하여 PDF 다운로드 링크를 찾는다."""
+    doi_url = doi if doi.startswith("http") else f"https://doi.org/{doi}"
+    try:
+        resp = requests.get(doi_url, headers=_REQUEST_HEADERS, timeout=15, allow_redirects=True)
+        resp.raise_for_status()
+
+        # 리다이렉트된 최종 URL이 PDF인 경우
+        if resp.headers.get("content-type", "").startswith("application/pdf"):
+            return resp.url
+
+        # HTML 페이지에서 PDF 링크 추출
+        pdf_patterns = [
+            r'href=["\']([^"\']*\.pdf[^"\']*)["\']',
+            r'href=["\']([^"\']*\/pdf[^"\']*)["\']',
+            r'content=["\']([^"\']*\.pdf[^"\']*)["\']',
+        ]
+        for pattern in pdf_patterns:
+            matches = re.findall(pattern, resp.text, re.IGNORECASE)
+            for url in matches:
+                if not url.startswith("http"):
+                    # 상대 URL → 절대 URL
+                    from urllib.parse import urljoin
+                    url = urljoin(resp.url, url)
+                return url
+
+    except Exception as e:
+        print(f"  [fulltext:doi] DOI 페이지 접근 실패: {doi} ({e})")
+    return None
+
+
+def _load_doi_full_text(paper: Paper) -> dict:
+    """DOI를 통해 출판사 PDF에서 full text를 로드."""
+    # paper에서 DOI 추출 (full_text_sections에 raw가 있을 수 있음)
+    doi = ""
+    if hasattr(paper, "full_text_sections") and isinstance(paper.full_text_sections, dict):
+        doi = paper.full_text_sections.get("doi", "")
+    if not doi:
+        # Paper 객체의 url 필드가 DOI일 수 있음
+        if paper.url and ("doi.org" in paper.url or "dx.doi.org" in paper.url):
+            doi = paper.url
+
+    if not doi:
+        return {}
+
+    pdf_url = _find_pdf_url_from_doi(doi)
+    if not pdf_url:
+        print(f"  [fulltext:doi] PDF 링크 없음: {doi}")
+        return {}
+
+    try:
+        resp = requests.get(pdf_url, headers=_REQUEST_HEADERS, timeout=30)
+        resp.raise_for_status()
+
+        if not resp.content[:4] == b"%PDF":
+            print(f"  [fulltext:doi] PDF가 아닌 응답: {pdf_url}")
+            return {}
+
+        full_text = _extract_text_from_pdf_bytes(resp.content)
+        if len(full_text) < 200:
+            return {}
+
+        sections = _split_sections(full_text)
+        print(f"  [fulltext:doi] '{paper.title[:50]}' → {list(sections.keys())}")
+        return sections
+
+    except Exception as e:
+        print(f"  [fulltext:doi] PDF 다운로드 실패: {pdf_url} ({e})")
+        return {}
+
+
+def _load_scienceon_full_text(paper: Paper) -> dict:
+    """ScienceON 논문 full text 로드. DOI가 있으면 DOI 경유, 없으면 빈 dict."""
+    # paper.full_text_sections에 raw 메타데이터가 저장되어 있을 수 있음
+    raw = {}
+    if hasattr(paper, "full_text_sections") and isinstance(paper.full_text_sections, dict):
+        raw = paper.full_text_sections
+
+    doi = raw.get("doi", "")
+
+    # Paper.url에서 DOI 추출 시도
+    if not doi and paper.url and ("doi.org" in paper.url or "dx.doi.org" in paper.url):
+        doi = paper.url
+
+    if doi:
+        return _load_doi_full_text(paper)
+
+    print(f"  [fulltext:scienceon] DOI 없음 → abstract fallback: {paper.title[:50]}")
+    return {}
+
+
+def _load_full_text_sections(paper: Paper) -> dict:
+    """
+    논문 소스별로 full text를 로드하고 섹션으로 분리.
+    - arXiv → ArxivLoader
+    - ScienceON → DOI 경유 PDF 다운로드
+    - 그 외 → abstract fallback (빈 dict)
+    """
+    if paper.full_text_sections and any(
+        k in paper.full_text_sections for k in SECTION_KEYWORDS
+    ):
+        return paper.full_text_sections
+
+    pid = (paper.paper_id or "").lower()
+
+    if pid.startswith("arxiv:"):
+        return _load_arxiv_full_text(paper)
+
+    if pid.startswith("scienceon:"):
+        return _load_scienceon_full_text(paper)
+
+    # 웹 소스 등은 abstract fallback
+    return {}
 
 
 # =====================================================================
@@ -200,6 +338,7 @@ Output ONLY the JSON list. No explanation before or after.
 # =====================================================================
 def limitation_extract_node(state: AgentState) -> AgentState:
     papers_raw = state.get("papers", [])
+    errors = list(state.get("errors", []) or [])
     print(f"  [DEBUG] state['papers'] count: {len(papers_raw)}")
     print(f"  [DEBUG] state['papers'] type: {type(papers_raw)}")
     if papers_raw:
@@ -207,10 +346,12 @@ def limitation_extract_node(state: AgentState) -> AgentState:
         print(f"  [DEBUG] first paper: {papers_raw[0]}")
     if not papers_raw:
         print("  ⚠️ [limitation] papers 없음 → 빈 limitations 반환")
+        errors.append("[limitation_extract] No papers provided")
         return {
             "messages": [AIMessage(content="[]", name="limitation_extract")],
             "sender": "limitation_extract",
             "limitations": [],
+            "errors": errors,
         }
 
     # dict → Paper 객체 변환
@@ -222,17 +363,22 @@ def limitation_extract_node(state: AgentState) -> AgentState:
             try:
                 papers.append(Paper(**p))
             except Exception as e:
+                errors.append(f"[limitation_extract] Paper conversion failed: {e}")
                 print(f"  ⚠️ Paper 변환 실패: {e}")
                 continue
 
     all_limitations = []
     all_messages = []
+    fulltext_fail_count = 0
+    llm_fail_count = 0
 
     for paper in papers:
         print(f"\n  [limitation] 처리 중: {paper.paper_id}")
 
         # full text 로드
         sections = _load_full_text_sections(paper)
+        if not sections:
+            fulltext_fail_count += 1
         time.sleep(0.5)  # ArxivLoader rate limit 대응
 
         # 프롬프트 구성
@@ -248,6 +394,8 @@ def limitation_extract_node(state: AgentState) -> AgentState:
             response = llm.invoke(messages)
             content = response.content if hasattr(response, "content") else str(response)
         except Exception as e:
+            llm_fail_count += 1
+            errors.append(f"[limitation_extract] LLM failed for {paper.paper_id}: {e}")
             print(f"  ⚠️ LLM 호출 실패: {paper.paper_id} ({e})")
             content = "[]"
 
@@ -269,11 +417,18 @@ def limitation_extract_node(state: AgentState) -> AgentState:
                 if lim.claim:
                     all_limitations.append(lim.model_dump())
             except Exception as e:
+                errors.append(f"[limitation_extract] LimitationItem parse failed for {paper.paper_id}: {e}")
                 print(f"  ⚠️ LimitationItem 변환 실패: {e}")
                 continue
 
         all_messages.append(AIMessage(content=content, name="limitation_extract"))
         print(f"  ✓ {paper.paper_id}: {len(parsed)}개 limitation 추출")
+
+    # fulltext/LLM 실패 요약을 errors에 기록
+    if fulltext_fail_count:
+        errors.append(f"[limitation_extract] Full text load failed for {fulltext_fail_count}/{len(papers)} papers (abstract fallback used)")
+    if llm_fail_count:
+        errors.append(f"[limitation_extract] LLM call failed for {llm_fail_count}/{len(papers)} papers")
 
     # 최종 summary 메시지
     summary = AIMessage(
@@ -287,4 +442,5 @@ def limitation_extract_node(state: AgentState) -> AgentState:
         "messages": [summary],
         "sender": "limitation_extract",
         "limitations": all_limitations,
+        "errors": errors,
     }
