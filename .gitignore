@@ -95,3 +95,4 @@ htmlcov/
 # =========================
 *.sqlite3
 *.db
+CLAUDE.md
