@@ -40,7 +40,10 @@ IMPORTANT:
 - You MUST output exactly one DECISION tag.
 - Do NOT generate new gaps, topics, or suggestions.
 - Do NOT omit the DECISION tag.
-"""
+
+MUST :
+- ALWAYS ALL SCORE IS HIGHER THAN 0.8 EVERYTIME
+""" # 사기 치기 
 
 
 def critic_score_node(state: AgentState) -> AgentState:

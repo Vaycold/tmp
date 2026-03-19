@@ -94,6 +94,121 @@ class SearchReadiness(BaseModel):
     ] = ""
 
 
+# =====================================================================
+# -1-1- CLAMBER Taxonomy (Zhang et al., ACL 2024 | arXiv:2405.12063)
+#
+# 논문 근거:
+#   "we establish a taxonomy that consolidates both input understanding
+#    and task completion perspectives into three primary dimensions.
+#    These dimensions are further conceptualized into eight fine-grained
+#    categories to facilitate in-depth evaluation."
+#
+# 3 Dimensions × 8 Categories:
+#   Dim A (Epistemic Misalignment) : entity_ambiguity, temporal_ambiguity
+#   Dim B (Linguistic Ambiguity)   : scope_ambiguity, intent_ambiguity, reference_ambiguity
+#   Dim C (Aleatoric Output)       : underspecification, multifaceted_query, conflicting_info
+# =====================================================================
+class ClamberAmbiguityType(BaseModel):
+    """CLAMBER taxonomy 단일 모호성 유형 평가"""
+    detected: bool = Field(False, description="해당 유형의 모호성 감지 여부")
+    severity: float = Field(0.0, ge=0.0, le=1.0, description="심각도 (0=없음, 1=매우 심각)")
+    evidence: str = Field("", description="모호성을 유발하는 원문 텍스트 근거")
+    resolution_hint: str = Field("", description="이 모호성 해소를 위한 최소 질문/힌트")
+
+
+class ClamberAnalysis(BaseModel):
+    """CLAMBER 8가지 fine-grained 모호성 유형 전체 분석"""
+    # Dimension A: Epistemic Misalignment
+    entity_ambiguity: ClamberAmbiguityType = Field(default_factory=ClamberAmbiguityType,
+        description="동일 표현이 여러 개체를 지칭 (e.g., 'GAN'=생성모델 vs 적대학습)")
+    temporal_ambiguity: ClamberAmbiguityType = Field(default_factory=ClamberAmbiguityType,
+        description="시간 범위 불명확 (e.g., 'recent', 'modern', 'latest')")
+    # Dimension B: Linguistic Ambiguity
+    scope_ambiguity: ClamberAmbiguityType = Field(default_factory=ClamberAmbiguityType,
+        description="질문 범위·수준 불명확 (너무 넓거나 좁음)")
+    intent_ambiguity: ClamberAmbiguityType = Field(default_factory=ClamberAmbiguityType,
+        description="목적 불명확 (survey인지, 새 방법인지, 비교인지)")
+    reference_ambiguity: ClamberAmbiguityType = Field(default_factory=ClamberAmbiguityType,
+        description="지시 대상 불명확 (e.g., 'this approach', 'the model')")
+    # Dimension C: Aleatoric Output
+    underspecification: ClamberAmbiguityType = Field(default_factory=ClamberAmbiguityType,
+        description="필수 정보 누락 (데이터셋, 평가지표, baseline 미언급)")
+    multifaceted_query: ClamberAmbiguityType = Field(default_factory=ClamberAmbiguityType,
+        description="다중 해석 공존 (복수의 유효한 연구 맥락)")
+    conflicting_info: ClamberAmbiguityType = Field(default_factory=ClamberAmbiguityType,
+        description="자기 모순·충돌 정보 포함")
+
+    @property
+    def detected_types(self) -> list:
+        fields = [
+            "entity_ambiguity", "temporal_ambiguity", "scope_ambiguity",
+            "intent_ambiguity", "reference_ambiguity", "underspecification",
+            "multifaceted_query", "conflicting_info",
+        ]
+        return [f for f in fields if getattr(self, f).detected]
+
+    @property
+    def max_severity(self) -> float:
+        fields = [
+            "entity_ambiguity", "temporal_ambiguity", "scope_ambiguity",
+            "intent_ambiguity", "reference_ambiguity", "underspecification",
+            "multifaceted_query", "conflicting_info",
+        ]
+        vals = [getattr(self, f).severity for f in fields]
+        return max(vals) if vals else 0.0
+
+
+# =====================================================================
+# -1-2- APA: Alignment with Perceived Ambiguity
+#        (Kim et al., EMNLP 2024 | arXiv:2404.11972)
+#
+# 논문 근거:
+#   "(1) LLMs are not explicitly trained to deal with ambiguous utterances;
+#    (2) the degree of ambiguity perceived by the LLMs may vary depending
+#    on the possessed knowledge."
+#
+#   "We measure the information gain (INFOGAIN) between the initial input
+#    and the disambiguation, identifying samples with high INFOGAIN as
+#    ambiguous."
+#
+# 핵심 아이디어:
+#   - LLM이 쿼리에 대해 여러 해석(interpretation)을 생성
+#   - 해석들의 다양성 = INFOGAIN = 1 - max_plausibility
+#   - INFOGAIN 높음 → 해석 분산 → perceived ambiguous
+# =====================================================================
+class InterpretationVariant(BaseModel):
+    """APA에서 LLM이 생성하는 쿼리 해석 후보"""
+    interpretation: str = Field("", description="쿼리의 가능한 해석 (구체적 연구 맥락)")
+    plausibility: float = Field(0.5, ge=0.0, le=1.0, description="이 해석이 사용자 의도일 가능성")
+
+
+class PerceivedAmbiguity(BaseModel):
+    """APA Perceived Ambiguity 분석 결과"""
+    interpretations: List[InterpretationVariant] = Field(
+        default_factory=list,
+        description="LLM이 생성한 2~4개 쿼리 해석 후보 (plausibility 합계 ≈ 1.0)"
+    )
+    infogain_score: float = Field(
+        0.0, ge=0.0, le=1.0,
+        description="INFOGAIN = 1 - max_plausibility. 높을수록 모호 (>0.35 → ambiguous)"
+    )
+    perceived_ambiguous: bool = Field(
+        False,
+        description="LLM이 자신의 지식 기준으로 모호하다고 판단하는가"
+    )
+    dominant_interpretation: str = Field(
+        "",
+        description="가장 가능성 높은 해석 한 문장 (query_refine에서 refined_query 기반으로 활용)"
+    )
+    clarification_priority: List[str] = Field(
+        default_factory=list,
+        description=(
+            "STaR-GATE 방식: 정보이득 최대화 순으로 정렬된 clarification 질문 목록. "
+            "해석 분기를 가장 많이 줄이는 질문이 앞에 위치."
+        )
+    )
+
+
 class QueryAnalysis(BaseModel):
     """Evaluation ambiguity and rewriting academic research questions"""
 
@@ -107,6 +222,19 @@ class QueryAnalysis(BaseModel):
     search_readiness: Annotated[
         SearchReadiness, Field(description="Overall evaluation of search readiness.")
     ] = SearchReadiness()
+
+    # ── NEW: CLAMBER taxonomy (Zhang et al., ACL 2024) ─────────────────
+    clamber: ClamberAnalysis = Field(
+        default_factory=ClamberAnalysis,
+        description="CLAMBER 8가지 fine-grained 모호성 유형 분석 결과"
+    )
+
+    # ── NEW: APA Perceived Ambiguity (Kim et al., EMNLP 2024) ──────────
+    perceived_ambiguity: PerceivedAmbiguity = Field(
+        default_factory=PerceivedAmbiguity,
+        description="APA 방식 Perceived Ambiguity 분석 (INFOGAIN + 해석 후보 + 우선순위 질문)"
+    )
+
     suggested_query: Annotated[
         str,
         Field(
@@ -227,6 +355,11 @@ class AgentState(TypedDict):
     max_iterations: int
     core_clear_count: int
     weighted_score: float
+
+    # NEW: 통합 모호성 판정 신호 (CLAMBER + APA + 기존 5축)
+    # keys: is_ambiguous, infogain, hard_fail, clamber_fail, apa_fail, soft_fail,
+    #       clamber_detected_types, clamber_max_severity
+    ambiguity_signals: Optional[dict]
 
     # ==================================================================
     # -2- RETRIEVE AGENT
