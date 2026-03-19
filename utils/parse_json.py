@@ -25,14 +25,13 @@ def parse_json(text: str) -> dict | list:
         except json.JSONDecodeError:
             pass
 
-    # Try finding JSON array first (longer match), then object
-    for pattern in [r"\[.*\]", r"\{.*\}"]:
-        json_match = re.search(pattern, text, re.DOTALL)
-        if json_match:
-            try:
-                return json.loads(json_match.group(0))
-            except json.JSONDecodeError:
-                continue
+    # Try finding JSON object or array
+    json_match = re.search(r"\{.*\}|\[.*\]", text, re.DOTALL)
+    if json_match:
+        try:
+            return json.loads(json_match.group(0))
+        except json.JSONDecodeError:
+            pass
 
     print(f"⚠️ Could not parse JSON from response: {text[:200]}...")
     return {}
