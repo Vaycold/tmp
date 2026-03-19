@@ -2,7 +2,7 @@ import json
 import re
 
 
-def parse_json(text: str) -> dict:
+def parse_json(text: str) -> dict | list:
     """
     Parse JSON from LLM response with error recovery.
 
@@ -10,23 +10,23 @@ def parse_json(text: str) -> dict:
         text: Raw LLM response
 
     Returns:
-        Parsed JSON dict
+        Parsed JSON (dict or list)
     """
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
 
-    # Try extracting from code blocks
-    json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    # Try extracting from code blocks (dict or array)
+    json_match = re.search(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", text, re.DOTALL)
     if json_match:
         try:
             return json.loads(json_match.group(1))
         except json.JSONDecodeError:
             pass
 
-    # Try finding JSON object
-    json_match = re.search(r"\{.*\}", text, re.DOTALL)
+    # Try finding JSON object or array
+    json_match = re.search(r"\{.*\}|\[.*\]", text, re.DOTALL)
     if json_match:
         try:
             return json.loads(json_match.group(0))

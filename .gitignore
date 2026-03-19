@@ -95,3 +95,7 @@ main2.py
 # =========================
 *.sqlite3
 *.db
+
+aws/
+CLAUDE.md
+awscliv2.zip

@@ -23,10 +23,9 @@ You are a retrieval orchestrator. Your job is to SELECT and CALL the most approp
 Available tools:
 - web_search_tool
 - arxiv_api_call_tool
-- scienceon_search_tool (currently placeholder)
+- scienceon_search_tool
 
 Inputs may include a previous Meaning Expansion Agent message containing:
-- refined_query
 - keywords
 - expanded_terms
 - arxiv_query_candidates
@@ -36,10 +35,9 @@ Inputs may include a previous Meaning Expansion Agent message containing:
 Rules:
 1) Do not perform meaning expansion yourself.
 2) Use only the available tools above.
-3) Select the minimum useful set of tools.
-4) Prefer arxiv_api_call_tool for academic paper search.
-5) Use web_search_tool for supplementary discovery or when the query is broad.
-6) ScienceON may be selected when Korean or domestic research coverage is useful, but it is currently not implemented.
+3) For academic paper retrieval, use arxiv_api_call_tool and scienceon_search_tool together unless one source is clearly unnecessary.
+4) Use web_search_tool for supplementary discovery.
+5) Normalize results into one combined papers list.
 
 Output JSON with fields:
 - selected_tools: [..]
@@ -64,7 +62,6 @@ def _parse_papers_from_ai_message(content: str) -> list[dict]:
         return []
 
     papers = []
-
     # ✅ LLM output JSON의 papers 필드
     for p in data.get("papers", []):
         if not isinstance(p, dict):
@@ -97,20 +94,14 @@ def _parse_papers_from_ai_message(content: str) -> list[dict]:
             "source": "web",
             "full_text_sections": {},
         })
-
     return papers
 
 
 def _parse_papers_from_tool_messages(messages: list) -> list[dict]:
-    """
-    tool 결과 메시지에서 arxiv/web 결과 파싱.
-    """
     papers = []
     for msg in messages:
         content = getattr(msg, "content", "")
-        if not content:
-            continue
-        if getattr(msg, "type", "") != "tool":
+        if not content or getattr(msg, "type", "") != "tool":
             continue
 
         data = _safe_json_loads(content)
@@ -118,12 +109,10 @@ def _parse_papers_from_tool_messages(messages: list) -> list[dict]:
             continue
 
         source = data.get("source", "")
-
-        # arxiv 결과
         if source == "arxiv":
             papers.extend(data.get("results", []))
-
-        # web 결과
+        elif source == "scienceon":
+            papers.extend(data.get("results", []))
         elif source == "web":
             for r in data.get("results", []):
                 url = r.get("url", "")
@@ -138,8 +127,23 @@ def _parse_papers_from_tool_messages(messages: list) -> list[dict]:
                     "source": "web",
                     "full_text_sections": {},
                 })
-
     return papers
+
+
+def _dedupe_papers(raw_papers: list[dict]) -> list[dict]:
+    seen = set()
+    deduped = []
+    for p in raw_papers:
+        key = (
+            (p.get("doi") or "").lower().strip(),
+            (p.get("title") or "").lower().strip(),
+            int(p.get("year", 0) or 0),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(p)
+    return deduped
 
 
 def paper_retrieval_node(state: AgentState) -> AgentState:
@@ -179,7 +183,8 @@ def paper_retrieval_node(state: AgentState) -> AgentState:
     if not raw_papers:
         raw_papers = _parse_papers_from_ai_message(last_content)
 
-    print(f"  [DEBUG] raw_papers count: {len(raw_papers)}")
+    raw_papers = _dedupe_papers(raw_papers)
+    print(f"  [DEBUG] raw_papers count (after dedup): {len(raw_papers)}")
 
     # ✅ BM25 랭킹
     query = state.get("refined_query") or state.get("user_question", "")
@@ -193,6 +198,10 @@ def paper_retrieval_node(state: AgentState) -> AgentState:
         if not p.get("title") or not p.get("paper_id"):
             continue
         try:
+            # ScienceON 등 외부 소스의 doi를 full_text_sections에 보존
+            fts = dict(p.get("full_text_sections") or {})
+            if p.get("doi") and "doi" not in fts:
+                fts["doi"] = p["doi"]
             papers.append(Paper(
                 paper_id=p.get("paper_id", ""),
                 title=p.get("title", ""),
@@ -201,7 +210,7 @@ def paper_retrieval_node(state: AgentState) -> AgentState:
                 year=p.get("year", 0) or 0,
                 authors=p.get("authors") or [],
                 score_bm25=p.get("score_bm25", 0.0),
-                full_text_sections=p.get("full_text_sections") or {},
+                full_text_sections=fts,
             ))
         except Exception as e:
             print(f"  ⚠️ Paper 변환 실패: {e}")
