@@ -137,8 +137,10 @@ def save_result(query: str, state_values: dict) -> Path:
  
         # ★ 핵심: gap_infer_node가 state["gaps"]에 저장한 구조화 데이터
         #   repeat_count 내림차순 정렬 상태 그대로 저장
+        "limitations": state_values.get("limitations", []),
         "gaps": state_values.get("gaps", []),
- 
+        "web_results": state_values.get("web_results", []),
+
         "messages": messages_out,
     }
  
