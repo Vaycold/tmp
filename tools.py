@@ -126,20 +126,25 @@ def arxiv_api_call(search_query: str, max_total: int, page_size: int, max_pages:
         )
 
         last_error = None
-        for _ in range(2):
+        for attempt in range(3):
             try:
                 r = requests.get(url, timeout=30)
+                if r.status_code == 429:
+                    wait = 3 * (attempt + 1)
+                    print(f"  [arxiv] 429 rate limit → {wait}s 대기 후 재시도 ({attempt + 1}/3)")
+                    time.sleep(wait)
+                    continue
                 r.raise_for_status()
                 batch = _parse_atom(r.text)
                 raw.extend(batch)
                 if not batch:
                     return list({p["paper_id"]: p for p in raw}.values())
-                time.sleep(0.3)
+                time.sleep(3)  # arXiv 권장 간격
                 last_error = None
                 break
             except Exception as e:
                 last_error = e
-                time.sleep(0.5)
+                time.sleep(3)
         if last_error:
             raise last_error
 
