@@ -66,7 +66,49 @@ final_response_agent = create_agent(
 )
 
 
+def _build_data_context(state: AgentState) -> str:
+    """state에 저장된 구조화 데이터를 텍스트로 변환하여 LLM에 전달."""
+    import json
+    parts = []
+
+    # limitations
+    limitations = state.get("limitations", [])
+    if limitations:
+        lines = ["[limitation_extract_data]"]
+        for lim in limitations:
+            lines.append(
+                f"  - [{lim.get('paper_id','')}][{lim.get('track','')}/{lim.get('source_section','')}] "
+                f"{lim.get('claim','')}"
+            )
+        parts.append("\n".join(lines))
+
+    # gaps
+    gaps = state.get("gaps", [])
+    if gaps:
+        lines = ["[gap_infer_data]"]
+        for i, g in enumerate(gaps, 1):
+            lines.append(
+                f"  GAP #{i} [{g.get('axis','')} · {g.get('axis_label','')} · {g.get('repeat_count',0)}개 논문]"
+            )
+            lines.append(f"    gap_statement: {g.get('gap_statement','')}")
+            lines.append(f"    elaboration: {g.get('elaboration','')}")
+            lines.append(f"    proposed_topic: {g.get('proposed_topic','')}")
+            lines.append(f"    supporting_papers: {g.get('supporting_papers',[])}")
+        parts.append("\n".join(lines))
+
+    return "\n\n".join(parts)
+
+
 def final_response_node(state: AgentState) -> AgentState:
-    result = final_response_agent.invoke(state)
+    # 구조화 데이터를 messages에 주입
+    data_context = _build_data_context(state)
+    enriched_state = dict(state)
+    if data_context:
+        from langchain_core.messages import HumanMessage
+        enriched_state["messages"] = list(state.get("messages", [])) + [
+            HumanMessage(content=f"아래는 파이프라인에서 생성된 구조화 데이터입니다. 이 데이터를 기반으로 보고서를 작성하세요.\n\n{data_context}")
+        ]
+
+    result = final_response_agent.invoke(enriched_state)
     last = AIMessage(content=result["messages"][-1].content, name="final_response")
     return {"messages": [last], "sender": "final_response"}

@@ -1,4 +1,5 @@
 # 3-5) Critic Score Agent
+import json
 from states import AgentState
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 from llm import get_llm
@@ -71,7 +72,22 @@ def critic_score_node(state: AgentState) -> AgentState:
         if name in ("query_analysis", "paper_retrieval", "limitation_extract", "gap_infer"):
             context_parts.append(f"[{name}]\n{content[:2000]}")
 
-    context = "\n\n".join(context_parts[-4:])  # 최근 4개 노드 결과
+    # state에 저장된 구조화 데이터도 컨텍스트에 포함
+    limitations = state.get("limitations", [])
+    if limitations:
+        lim_summary = "\n".join(
+            f"  - [{l.get('paper_id','')}] {l.get('claim','')}" for l in limitations[:20]
+        )
+        context_parts.append(f"[limitations_data]\n{lim_summary}")
+
+    gaps = state.get("gaps", [])
+    if gaps:
+        gap_summary = "\n".join(
+            f"  - [{g.get('axis','')}] {g.get('gap_statement','')} (논문 {g.get('repeat_count',0)}편)" for g in gaps
+        )
+        context_parts.append(f"[gaps_data]\n{gap_summary}")
+
+    context = "\n\n".join(context_parts[-6:])
 
     retry_note = ""
     if loop_count > 0:
