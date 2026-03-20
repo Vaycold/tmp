@@ -157,6 +157,16 @@ def save_result(query: str, state_values: dict) -> Path:
 def run():
     config_dict = {"configurable": {"thread_id": random_uuid()}, "recursion_limit": 30} # 최대 노드 실행 개수 지정 (순환 로직에 빠지지 않기 위함)
 
+    # --- LLM Provider 선택 ---
+    from llm import select_provider_interactive
+    import os
+    selected_provider = select_provider_interactive()
+    os.environ["LLM_PROVIDER"] = selected_provider
+
+    # lru_cache 초기화 (provider 변경 반영)
+    from llm import get_llm
+    get_llm.cache_clear()
+
     # --- 사용자 입력 ---
     default_query = "Domain adaptation"
     user_input = input("연구 질문을 입력하세요: ").strip() or default_query
