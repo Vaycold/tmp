@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 import time
 from typing import Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 import fitz
@@ -13,6 +14,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from states import AgentState, Paper, LimitationItem
 from llm import get_llm
+from utils.parse_json import parse_json
 
 llm = get_llm()
 
@@ -271,44 +273,65 @@ def _build_prompt(paper: Paper, sections: dict) -> str:
         "",
     ]
 
-ROLE_TOOLS = build_role_tools()
-LIMITATION_TOOLS = ROLE_TOOLS["LIMITATION_TOOLS"]
+    if use_fallback:
+        lines += [
+            "## FALLBACK: Abstract Only",
+            paper.abstract,
+        ]
+    else:
+        if track1:
+            lines.append("## Track 1: Author-Stated Sections")
+            for k, v in track1.items():
+                lines += [f"### [{k.upper()}]", v, ""]
 
-limitation_extract_agent = create_agent(
-    llm,
-    tools=LIMITATION_TOOLS,
-    system_prompt=make_system_prompt(
-        "ROLE: Limitation Extract Agent\n"
-        "You extract limitation/future-work statements from retrieved papers/snippets.\n"
-        "RULES:\n"
-        "1. Process ALL papers in the input without exception.\n"
-        "2. Extract 1-2 key limitations per paper. No more, no less.\n"
-        "3. Each limitation MUST include:\n"
-        "   - paper_id: the paper's unique identifier\n"
-        "   - claim: a brief limitation statement (1-2 sentences)\n"
-        "   - evidence_quote: an exact quote from the provided text sections\n"
-        "4. Do NOT infer or assume limitations not stated in the text.\n"
-        "5. Do NOT skip any paper even if the abstract is short or unclear.\n"
-        "6. Do NOT infer gaps yet.\n\n"
+        if track2:
+            lines.append("## Track 2: Structural Analysis Sections")
+            for k, v in track2.items():
+                lines += [f"### [{k.upper()}]", v, ""]
 
-        "SECTION PRIORITY (high to low):\n"
-        "  1. INTRODUCTION  — author-defined gaps, most reliable\n"
-        "  2. CONCLUSION    — key contributions + limitations\n"
-        "  3. LIMITATIONS   — author-stated weaknesses\n"
-        "  4. DISCUSSION    — result interpretation + limitations\n"
-        "  5. ABSTRACT      — fallback only, least detail\n"
-        "  6. FUTURE_WORK   — supplementary evidence only\n\n"
+    return "\n".join(lines)
 
-        "OUTPUT FORMAT (strictly follow):\n"
-        "paper_id: <id>\n"
-        "  - claim: <limitation statement>\n"
-        "    evidence_quote: <exact quote from paper>\n"
-        "  - claim: <limitation statement>\n"
-        "    evidence_quote: <exact quote from paper>\n"
-        "Output be structured: paper_id -> [limitation_sentences], plus brief rationale.\n"
-        "Do NOT infer gaps yet.\n"
-    ),
-)
+
+SYSTEM_PROMPT = """ROLE: Limitation Extract Agent
+
+You extract research limitations from academic papers using a 2-track approach.
+
+## Track 1: Author-Stated Limitations
+Sections: conclusion, limitations, future_work
+→ Extract what the authors explicitly admit as limitations or future work.
+→ Be critical: authors often write defensively. Note if a stated "future work" is actually avoiding a limitation.
+
+## Track 2: Structural Limitations
+Sections: introduction, method, experiment, discussion
+→ Identify limitations NOT explicitly stated by authors but revealed by:
+  - Narrow assumptions in the method (e.g., "we assume i.i.d. data")
+  - Limited datasets or evaluation scope (e.g., single domain, small scale)
+  - Missing baselines or comparisons
+  - Scope restrictions mentioned in introduction
+
+## Rules
+1. Extract 1-3 limitations per paper. Prioritize Track 2 structural findings.
+2. Each limitation MUST include:
+   - claim: concise limitation statement (1-2 sentences)
+   - evidence_quote: exact short quote from the provided text
+   - track: "author_stated" or "structural"
+   - source_section: section name (e.g., "conclusion", "method", "experiment")
+3. Do NOT infer gaps. Only extract limitations from the provided text.
+4. If only abstract is provided (FALLBACK), extract 1 limitation maximum.
+
+## Output Format (strictly JSON list)
+[
+  {
+    "paper_id": "<id>",
+    "claim": "<limitation statement>",
+    "evidence_quote": "<exact short quote>",
+    "track": "author_stated" or "structural",
+    "source_section": "<section name>"
+  },
+  ...
+]
+Output ONLY the JSON list. No explanation before or after.
+"""
 
 
 def limitation_extract_node(state: AgentState) -> AgentState:
@@ -343,18 +366,19 @@ def limitation_extract_node(state: AgentState) -> AgentState:
                 continue
 
     all_limitations = []
-    all_messages = []
     fulltext_fail_count = 0
     llm_fail_count = 0
 
-    for paper in papers:
+    def _process_single_paper(paper: Paper) -> dict:
+        """논문 1편에 대해 full text 로드 → LLM 추출 → 파싱을 수행."""
         print(f"\n  [limitation] 처리 중: {paper.paper_id}")
+        result = {"paper_id": paper.paper_id, "limitations": [], "errors": [],
+                  "fulltext_failed": False, "llm_failed": False, "content": "[]"}
 
         # full text 로드
         sections = _load_full_text_sections(paper)
         if not sections:
-            fulltext_fail_count += 1
-        time.sleep(0.5)  # ArxivLoader rate limit 대응
+            result["fulltext_failed"] = True
 
         # 프롬프트 구성
         paper_prompt = _build_prompt(paper, sections)
@@ -369,10 +393,30 @@ def limitation_extract_node(state: AgentState) -> AgentState:
             response = llm.invoke(messages)
             content = response.content if hasattr(response, "content") else str(response)
         except Exception as e:
-            llm_fail_count += 1
-            errors.append(f"[limitation_extract] LLM failed for {paper.paper_id}: {e}")
-            print(f"  ⚠️ LLM 호출 실패: {paper.paper_id} ({e})")
-            content = "[]"
+            # 콘텐츠 필터 등으로 실패 시 abstract만으로 재시도
+            if "content_filter" in str(e) or "content management policy" in str(e):
+                print(f"  ⚠️ 콘텐츠 필터 차단 → abstract fallback 재시도: {paper.paper_id}")
+                fallback_prompt = _build_prompt(paper, {})
+                fallback_messages = [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": fallback_prompt},
+                ]
+                try:
+                    response = llm.invoke(fallback_messages)
+                    content = response.content if hasattr(response, "content") else str(response)
+                    result["errors"].append(f"[limitation_extract] Content filter triggered for {paper.paper_id}, used abstract fallback")
+                except Exception as e2:
+                    result["llm_failed"] = True
+                    result["errors"].append(f"[limitation_extract] LLM failed even with abstract fallback for {paper.paper_id}: {e2}")
+                    print(f"  ⚠️ Abstract fallback도 실패: {paper.paper_id} ({e2})")
+                    content = "[]"
+            else:
+                result["llm_failed"] = True
+                result["errors"].append(f"[limitation_extract] LLM failed for {paper.paper_id}: {e}")
+                print(f"  ⚠️ LLM 호출 실패: {paper.paper_id} ({e})")
+                content = "[]"
+
+        result["content"] = content
 
         # JSON 파싱
         parsed = parse_json(content)
@@ -390,14 +434,28 @@ def limitation_extract_node(state: AgentState) -> AgentState:
                     source_section=item.get("source_section", ""),
                 )
                 if lim.claim:
-                    all_limitations.append(lim.model_dump())
+                    result["limitations"].append(lim.model_dump())
             except Exception as e:
-                errors.append(f"[limitation_extract] LimitationItem parse failed for {paper.paper_id}: {e}")
+                result["errors"].append(f"[limitation_extract] LimitationItem parse failed for {paper.paper_id}: {e}")
                 print(f"  ⚠️ LimitationItem 변환 실패: {e}")
-                continue
 
-        all_messages.append(AIMessage(content=content, name="limitation_extract"))
-        print(f"  ✓ {paper.paper_id}: {len(parsed)}개 limitation 추출")
+        print(f"  ✓ {paper.paper_id}: {len(result['limitations'])}개 limitation 추출")
+        return result
+
+    # 병렬 처리 (I/O 바운드: HTTP + LLM API)
+    max_workers = min(5, len(papers))
+    print(f"  🔄 {len(papers)}편 논문을 {max_workers}개 워커로 병렬 처리 시작")
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_process_single_paper, p): p for p in papers}
+        for future in as_completed(futures):
+            result = future.result()
+            all_limitations.extend(result["limitations"])
+            errors.extend(result["errors"])
+            if result["fulltext_failed"]:
+                fulltext_fail_count += 1
+            if result["llm_failed"]:
+                llm_fail_count += 1
 
     # fulltext/LLM 실패 요약을 errors에 기록
     if fulltext_fail_count:
