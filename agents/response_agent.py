@@ -68,8 +68,19 @@ final_response_agent = create_agent(
 
 def _build_data_context(state: AgentState) -> str:
     """state에 저장된 구조화 데이터를 텍스트로 변환하여 LLM에 전달."""
-    import json
     parts = []
+
+    # papers (사실 데이터 — 제목, 연도, 저자 등)
+    papers = state.get("papers", [])
+    if papers:
+        lines = ["[papers_data]"]
+        for i, p in enumerate(papers, 1):
+            if isinstance(p, dict):
+                pid, title, year, authors = p.get("paper_id",""), p.get("title",""), p.get("year",0), p.get("authors",[])
+            else:
+                pid, title, year, authors = p.paper_id, p.title, p.year, p.authors
+            lines.append(f"  {i}. {pid} | {title} | {year} | {', '.join(authors[:3]) if authors else 'N/A'}")
+        parts.append("\n".join(lines))
 
     # limitations
     limitations = state.get("limitations", [])
