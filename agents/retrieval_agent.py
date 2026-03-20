@@ -78,22 +78,7 @@ def _parse_papers_from_ai_message(content: str) -> list[dict]:
             "full_text_sections": {},
         })
 
-    # ✅ web_results도 papers로 변환
-    for r in data.get("web_results", []):
-        if not isinstance(r, dict):
-            continue
-        url = r.get("url", "")
-        papers.append({
-            "paper_id": f"WEB_{url[-40:].replace('/', '_').replace(':', '')}",
-            "title": r.get("title", ""),
-            "abstract": r.get("content") or r.get("snippet", ""),
-            "url": url,
-            "year": 0,
-            "authors": [],
-            "score_bm25": 0.0,
-            "source": "web",
-            "full_text_sections": {},
-        })
+    # web_results는 별도로 반환하지 않음 (papers에 합치지 않음)
     return papers
 
 
@@ -113,21 +98,47 @@ def _parse_papers_from_tool_messages(messages: list) -> list[dict]:
             papers.extend(data.get("results", []))
         elif source == "scienceon":
             papers.extend(data.get("results", []))
-        elif source == "web":
-            for r in data.get("results", []):
-                url = r.get("url", "")
-                papers.append({
-                    "paper_id": f"WEB_{url[-40:].replace('/', '_').replace(':', '')}",
-                    "title": r.get("title", ""),
-                    "abstract": r.get("content") or r.get("abstract") or r.get("snippet", ""),
-                    "url": url,
-                    "year": 0,
-                    "authors": [],
-                    "score_bm25": 0.0,
-                    "source": "web",
-                    "full_text_sections": {},
-                })
+        # web source는 별도 처리 (papers에 합치지 않음)
     return papers
+
+
+def _parse_web_results_from_tool_messages(messages: list) -> list[dict]:
+    """ToolMessage에서 웹 검색 결과만 별도로 파싱."""
+    web_results = []
+    for msg in messages:
+        content = getattr(msg, "content", "")
+        if not content or getattr(msg, "type", "") != "tool":
+            continue
+        data = _safe_json_loads(content)
+        if not data or not isinstance(data, dict):
+            continue
+        if data.get("source") == "web":
+            for r in data.get("results", []):
+                web_results.append({
+                    "title": r.get("title", ""),
+                    "url": r.get("url", ""),
+                    "content": r.get("content") or r.get("snippet", ""),
+                    "source": "web",
+                })
+    return web_results
+
+
+def _parse_web_results_from_ai_message(content: str) -> list[dict]:
+    """AIMessage JSON에서 web_results를 별도로 파싱."""
+    data = _safe_json_loads(content)
+    if not data or not isinstance(data, dict):
+        return []
+    web_results = []
+    for r in data.get("web_results", []):
+        if not isinstance(r, dict):
+            continue
+        web_results.append({
+            "title": r.get("title", ""),
+            "url": r.get("url", ""),
+            "content": r.get("content") or r.get("snippet", ""),
+            "source": "web",
+        })
+    return web_results
 
 
 def _dedupe_papers(raw_papers: list[dict]) -> list[dict]:
@@ -179,9 +190,14 @@ def paper_retrieval_node(state: AgentState) -> AgentState:
     # ✅ 1순위: tool 메시지에서 직접 파싱
     raw_papers = _parse_papers_from_tool_messages(messages)
 
+    # ✅ 웹 결과 별도 파싱
+    web_results = _parse_web_results_from_tool_messages(messages)
+
     # ✅ 2순위: LLM output JSON의 papers 필드에서 파싱 (현재 구조 대응)
     if not raw_papers:
         raw_papers = _parse_papers_from_ai_message(last_content)
+        if not web_results:
+            web_results = _parse_web_results_from_ai_message(last_content)
 
     raw_papers = _dedupe_papers(raw_papers)
     print(f"  [DEBUG] raw_papers count (after dedup): {len(raw_papers)}")
@@ -216,11 +232,12 @@ def paper_retrieval_node(state: AgentState) -> AgentState:
             print(f"  ⚠️ Paper 변환 실패: {e}")
             continue
 
-    print(f"  ✓ Retrieved {len(papers)} papers → state['papers']에 저장")
+    print(f"  ✓ Retrieved {len(papers)} papers + {len(web_results)} web results")
 
     last = AIMessage(content=last_content, name="paper_retrieval")
     return {
         "messages": [last],
         "sender": "paper_retrieval",
-        "papers": papers,  # ✅ state["papers"]에 저장
+        "papers": papers,
+        "web_results": web_results,
     }
