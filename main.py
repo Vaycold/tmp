@@ -65,8 +65,18 @@ def print_stream_events_and_capture_interrupt(app, stream_input, config_dict):
     for i, event in enumerate(app.stream(stream_input, config_dict, subgraphs=True)):
         path, update = event
 
-        print(f"\n===== EVENT {i} =====")
-        print("PATH:", " -> ".join(path) if path else "(root)")
+        # subgraph 내부 이벤트는 건너뛰고 root 이벤트만 출력
+        if path:
+            # interrupt 체크는 subgraph에서도 필요
+            for node, values in update.items():
+                if node == "__interrupt__":
+                    interrupted = True
+                # clarify_prompt도 subgraph에서 발생
+                if isinstance(values, dict):
+                    for msg in values.get("messages", []):
+                        if getattr(msg, "name", None) == "clarify_prompt":
+                            latest_clarify_prompt = msg.content
+            continue
 
         for node, values in update.items():
             if node == "__interrupt__":
@@ -74,7 +84,7 @@ def print_stream_events_and_capture_interrupt(app, stream_input, config_dict):
                 print("\n*** INTERRUPT ***")
                 continue
 
-            print(f"\n--- NODE: {node} ---")
+            print(f"\n--- {node} ---")
 
             if not isinstance(values, dict):
                 print(values)
@@ -213,13 +223,6 @@ def run():
     print("is_ambiguous =", values.get("is_ambiguous"))
     print("refined_query =", values.get("refined_query"))
 
-    print_divider("[파이프라인 완료]")
-
-    if values.get("messages"):
-        print(values["messages"][-1].content)
-    else:
-        print(values)
-    
     save_result(user_input, values)
 
 if __name__ == "__main__":
