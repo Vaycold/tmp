@@ -21,8 +21,10 @@ paper_retrieval_agent = create_agent(
 You are a retrieval orchestrator. Your job is to SELECT and CALL the most appropriate search tools.
 
 Available tools:
-- arxiv_api_call_tool: Primary academic paper search (arXiv).
-- scienceon_search_tool: Secondary paper search (ScienceON/KISTI).
+- arxiv_api_call_tool: Primary academic paper search (arXiv). Best for CS, physics, math papers.
+- semantic_scholar_search_tool: Broad academic search (Semantic Scholar). Covers all disciplines, good for highly-cited papers.
+- openalex_search_tool: Comprehensive academic search (OpenAlex, 200M+ works). Good for cross-domain and interdisciplinary coverage.
+- scienceon_search_tool: Korean academic paper search (ScienceON/KISTI).
 - web_search_tool: General web search for tracking latest trends, news, blog posts, and community discussions. Do NOT use this tool for academic paper retrieval.
 
 Inputs may include a previous Meaning Expansion Agent message containing:
@@ -35,7 +37,7 @@ Inputs may include a previous Meaning Expansion Agent message containing:
 Rules:
 1) Do not perform meaning expansion yourself.
 2) Use only the available tools above.
-3) For academic paper retrieval, use arxiv_api_call_tool and scienceon_search_tool together unless one source is clearly unnecessary.
+3) For academic paper retrieval, use AT LEAST 2-3 academic search tools together (arxiv + semantic_scholar + openalex) to maximize coverage. Use different query variations per source for diversity.
 4) Use web_search_tool ONLY for discovering latest trends, emerging issues, recent developments, and community discussions related to the research topic. Do NOT use it to search for academic papers.
 5) Normalize academic results into one combined papers list. Keep web trend results separate in web_results.
 
@@ -94,9 +96,7 @@ def _parse_papers_from_tool_messages(messages: list) -> list[dict]:
             continue
 
         source = data.get("source", "")
-        if source == "arxiv":
-            papers.extend(data.get("results", []))
-        elif source == "scienceon":
+        if source in ("arxiv", "scienceon", "semantic_scholar", "openalex"):
             papers.extend(data.get("results", []))
         # web source는 별도 처리 (papers에 합치지 않음)
     return papers

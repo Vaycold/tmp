@@ -7,7 +7,7 @@ from typing import Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
-import fitz
+import pymupdf as fitz
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
@@ -101,28 +101,70 @@ def _extract_arxiv_id(paper: Paper) -> Optional[str]:
     return pid if pid else None
 
 
-def _load_arxiv_full_text(paper: Paper) -> dict:
-    """arXiv 논문 full text 로드 (ArxivLoader 사용)."""
+def _load_arxiv_html(paper: Paper) -> dict:
+    """ar5iv HTML 버전에서 텍스트 추출 (PDF 다운로드 불필요)."""
     arxiv_id = _extract_arxiv_id(paper)
+    if not arxiv_id:
+        return {}
+
+    url = f"https://ar5iv.labs.arxiv.org/html/{arxiv_id}"
+    try:
+        from bs4 import BeautifulSoup
+
+        resp = requests.get(url, headers=_REQUEST_HEADERS, timeout=15)
+        resp.raise_for_status()
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        # 불필요한 요소 제거
+        for tag in soup.find_all(["script", "style", "nav", "footer", "header"]):
+            tag.decompose()
+
+        # 본문 영역 추출
+        article = soup.find("article") or soup.find("div", class_="ltx_page_content") or soup
+        full_text = article.get_text(separator="\n", strip=True)
+
+        if len(full_text) < 200:
+            return {}
+
+        sections = _split_sections(full_text)
+        if sections:
+            print(f"  [fulltext:ar5iv] '{paper.title[:50]}' → {list(sections.keys())}")
+        return sections
+
+    except Exception as e:
+        print(f"  [fulltext:ar5iv] 실패: {paper.title[:50]} ({e})")
+        return {}
+
+
+def _load_arxiv_pdf(paper: Paper) -> dict:
+    """arXiv PDF fallback (ArxivLoader 사용)."""
+    arxiv_id = _extract_arxiv_id(paper)
+    if not arxiv_id:
+        return {}
     try:
         from langchain_community.document_loaders import ArxivLoader
 
-        if arxiv_id:
-            loader = ArxivLoader(query=arxiv_id, load_max_docs=1, load_all_available_meta=True)
-        else:
-            return {}
-
+        loader = ArxivLoader(query=arxiv_id, load_max_docs=1, load_all_available_meta=True)
         docs = loader.load()
         if not docs:
             return {}
 
         sections = _split_sections(docs[0].page_content)
-        print(f"  [fulltext:arxiv] '{paper.title[:50]}' → {list(sections.keys())}")
+        print(f"  [fulltext:arxiv-pdf] '{paper.title[:50]}' → {list(sections.keys())}")
         return sections
 
     except Exception as e:
-        print(f"  [fulltext:arxiv] 로드 실패: {paper.title[:50]} ({e})")
+        print(f"  [fulltext:arxiv-pdf] 로드 실패: {paper.title[:50]} ({e})")
         return {}
+
+
+def _load_arxiv_full_text(paper: Paper) -> dict:
+    """arXiv 논문 full text 로드: ar5iv HTML 우선, 실패 시 PDF fallback."""
+    sections = _load_arxiv_html(paper)
+    if sections:
+        return sections
+    return _load_arxiv_pdf(paper)
 
 
 def _extract_text_from_pdf_bytes(pdf_bytes: bytes) -> str:
@@ -245,6 +287,12 @@ def _load_full_text_sections(paper: Paper) -> dict:
 
     if pid.startswith("scienceon:"):
         return _load_scienceon_full_text(paper)
+
+    # Semantic Scholar / OpenAlex: DOI 경유 시도, 없으면 abstract fallback
+    if pid.startswith(("s2:", "openalex:")):
+        sections = _load_doi_full_text(paper)
+        if sections:
+            return sections
 
     # 웹 소스 등은 abstract fallback
     return {}
