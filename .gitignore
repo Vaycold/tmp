@@ -96,6 +96,11 @@ main2.py
 *.sqlite3
 *.db
 
+# =========================
+# 다운로드된 논문 PDF
+# =========================
+*.pdf
+
 aws/
 CLAUDE.md
 awscliv2.zip
