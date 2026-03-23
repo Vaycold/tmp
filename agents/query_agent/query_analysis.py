@@ -197,7 +197,7 @@ def query_analysis_node(state: AgentState) -> AgentState:
             content=json.dumps(result.model_dump(), ensure_ascii=False),
             name="query_analysis",
         ),
-        AIMessage(content=scope_msg, name="scope_prompt"),
+        AIMessage(content=scope_msg, name="clarify_prompt"),
     ]
 
     is_searchable = (sa.scope_level == "SEARCHABLE")
