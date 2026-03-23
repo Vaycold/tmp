@@ -16,8 +16,6 @@ from states import AgentState, Paper, LimitationItem
 from llm import get_llm
 from utils.parse_json import parse_json
 
-llm = get_llm()
-
 # =====================================================================
 # 섹션 키워드 정의
 # =====================================================================
@@ -425,6 +423,9 @@ def limitation_extract_node(state: AgentState) -> AgentState:
         print(f"\n  [limitation] 처리 중: {paper.paper_id}")
         result = {"paper_id": paper.paper_id, "limitations": [], "errors": [],
                   "fulltext_failed": False, "llm_failed": False, "content": "[]"}
+
+        # 스레드 내에서 LLM 인스턴스 획득 (provider 변경 반영)
+        llm = get_llm()
 
         # full text 로드
         sections = _load_full_text_sections(paper)

@@ -420,53 +420,52 @@ def openalex_search(query: str, per_page: int = 20) -> list[dict]:
         "select": "id,title,publication_year,doi,authorships,abstract_inverted_index",
     }
     papers: list[dict] = []
-    try:
-        r = requests.get(
-            _OPENALEX_API,
-            params=params,
-            headers={"User-Agent": "GAPAGO-Research-Agent/1.0 (mailto:gapago@research.dev)"},
-            timeout=30,
-        )
-        r.raise_for_status()
-        results = r.json().get("results", [])
-        for p in results:
-            title = _norm(p.get("title") or "")
-            if not title:
-                continue
+    r = requests.get(
+        _OPENALEX_API,
+        params=params,
+        headers={"User-Agent": "GAPAGO-Research-Agent/1.0 (mailto:gapago@research.dev)"},
+        timeout=30,
+    )
+    r.raise_for_status()
+    results = r.json().get("results", [])
+    for p in results:
+        title = _norm(p.get("title") or "")
+        if not title:
+            continue
 
-            # abstract 복원 (inverted index → text)
-            abstract = ""
-            inv_idx = p.get("abstract_inverted_index")
-            if inv_idx and isinstance(inv_idx, dict):
-                word_positions = []
-                for word, positions in inv_idx.items():
-                    for pos in positions:
-                        word_positions.append((pos, word))
-                word_positions.sort()
-                abstract = " ".join(w for _, w in word_positions)
+        # abstract 복원 (inverted index → text)
+        abstract = ""
+        inv_idx = p.get("abstract_inverted_index")
+        if inv_idx and isinstance(inv_idx, dict):
+            word_positions = []
+            for word, positions in inv_idx.items():
+                for pos in positions:
+                    word_positions.append((pos, word))
+            word_positions.sort()
+            abstract = " ".join(w for _, w in word_positions)
 
-            doi_url = p.get("doi") or ""
-            doi = doi_url.replace("https://doi.org/", "").replace("http://doi.org/", "") if doi_url else ""
-            openalex_id = (p.get("id") or "").replace("https://openalex.org/", "")
+        doi_url = p.get("doi") or ""
+        doi = doi_url.replace("https://doi.org/", "").replace("http://doi.org/", "") if doi_url else ""
+        openalex_id = (p.get("id") or "").replace("https://openalex.org/", "")
 
-            authors = []
-            for a in (p.get("authorships") or []):
-                name = (a.get("author") or {}).get("display_name", "")
-                if name:
-                    authors.append(name)
+        authors = []
+        for a in (p.get("authorships") or []):
+            name = (a.get("author") or {}).get("display_name", "")
+            if name:
+                authors.append(name)
 
-            papers.append({
-                "paper_id": f"openalex:{openalex_id}",
-                "title": title,
-                "abstract": _norm(abstract),
-                "url": doi_url or f"https://openalex.org/{openalex_id}",
-                "year": p.get("publication_year") or 0,
-                "authors": authors,
-                "score_bm25": 0.0,
-                "source": "openalex",
-                "full_text_sections": {},
-                "doi": doi,
-            })
+        papers.append({
+            "paper_id": f"openalex:{openalex_id}",
+            "title": title,
+            "abstract": _norm(abstract),
+            "url": doi_url or f"https://openalex.org/{openalex_id}",
+            "year": p.get("publication_year") or 0,
+            "authors": authors,
+            "score_bm25": 0.0,
+            "source": "openalex",
+            "full_text_sections": {},
+            "doi": doi,
+        })
     return papers
 
 
