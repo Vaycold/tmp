@@ -206,7 +206,7 @@ def recency_check_node(state: AgentState) -> AgentState:
 
     # Step 2: LLM으로 최신성 판정
     web_context = "\n".join(
-        f"  - [{r.get('title', 'N/A')}] {r.get('content', '')[:400]}"
+        f"  - [{r.get('title', 'N/A')}] ({r.get('url', 'N/A')}) {r.get('content', '')[:400]}"
         for r in all_web[:15]
     )
 
