@@ -75,7 +75,7 @@ RECENCY_PROMPT = """ROLE: Recency Check Agent
 You verify whether research limitations are still relevant by cross-referencing with recent web sources.
 
 ## Task
-For each limitation, determine if recent developments have addressed it:
+For each limitation (identified by limitation_id), determine if recent developments have addressed it:
 - "unresolved": No evidence that this limitation has been addressed
 - "partial": Some progress found, but not fully resolved
 - "resolved": Clear evidence that this limitation has been overcome
@@ -83,8 +83,7 @@ For each limitation, determine if recent developments have addressed it:
 ## Output Format (strictly JSON list)
 [
   {
-    "paper_id": "<id>",
-    "claim": "<original limitation claim>",
+    "limitation_id": <integer, must match the input limitation_id exactly>,
     "recency_status": "unresolved" or "partial" or "resolved",
     "evidence": "<brief explanation referencing web source, or 'No relevant web evidence found'>"
   },
@@ -95,7 +94,8 @@ For each limitation, determine if recent developments have addressed it:
 1. Be conservative: only mark "resolved" if there is clear, specific evidence.
 2. If no web result is relevant to a limitation, mark it "unresolved".
 3. Do NOT invent or hallucinate web sources. Only use the provided web results.
-4. Output ONLY the JSON list. No explanation before or after."""
+4. You MUST use the exact limitation_id from the input. Do NOT renumber or skip.
+5. Output ONLY the JSON list. No explanation before or after."""
 
 
 def _search_for_recency(limitations: list, refined_query: str, existing_web: list,
@@ -211,7 +211,7 @@ def recency_check_node(state: AgentState) -> AgentState:
     )
 
     lim_context = "\n".join(
-        f"  {i+1}. [{l.get('paper_id', '')}] {l.get('claim', '')}"
+        f"  limitation_id={i}: [{l.get('paper_id', '')}] {l.get('claim', '')}"
         for i, l in enumerate(limitations)
     )
 
@@ -246,17 +246,20 @@ def recency_check_node(state: AgentState) -> AgentState:
 
     recency_map = {}
     for item in parsed:
-        key = (item.get("paper_id", ""), item.get("claim", "")[:50])
-        recency_map[key] = {
-            "status": item.get("recency_status", "unresolved"),
-            "evidence": item.get("evidence", ""),
-        }
+        lid = item.get("limitation_id")
+        if lid is not None:
+            try:
+                recency_map[int(lid)] = {
+                    "status": item.get("recency_status", "unresolved"),
+                    "evidence": item.get("evidence", ""),
+                }
+            except (ValueError, TypeError):
+                continue
 
     resolved_count = 0
     partial_count = 0
-    for lim in limitations:
-        key = (lim.get("paper_id", ""), lim.get("claim", "")[:50])
-        match = recency_map.get(key)
+    for i, lim in enumerate(limitations):
+        match = recency_map.get(i)
         if match:
             lim["recency_status"] = match["status"]
             lim["recency_evidence"] = match["evidence"]

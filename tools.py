@@ -467,8 +467,6 @@ def openalex_search(query: str, per_page: int = 20) -> list[dict]:
                 "full_text_sections": {},
                 "doi": doi,
             })
-    except Exception as e:
-        raise e
     return papers
 
 
