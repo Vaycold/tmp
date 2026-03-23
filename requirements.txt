@@ -123,7 +123,7 @@ nvidia-nvtx-cu12==12.8.90
 openai==2.21.0
 orjson==3.11.7
 ormsgpack==1.12.2
-packaging @ file:///home/task_176104877067765/conda-bld/packaging_1761049113113/work
+packaging==25.0
 pandas==2.3.3
 pillow==12.1.1
 pluggy==1.6.0
