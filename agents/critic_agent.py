@@ -1,5 +1,4 @@
 # 3-5) Critic Score Agent
-import json
 from states import AgentState
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 from llm import get_llm
