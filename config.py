@@ -56,6 +56,14 @@ class Configuration:
         default=_int_env("SCIENCEON_DEFAULT_ROW_COUNT", 10),
         metadata={"description": "ScienceON default row count", "range": [1, 100]},
     )
+    bm25_top_k: int = field(
+        default=_int_env("BM25_TOP_K", 30),
+        metadata={"description": "BM25 1st stage filter count", "range": [10, 100]},
+    )
+    reranker_top_k: int = field(
+        default=_int_env("RERANKER_TOP_K", 15),
+        metadata={"description": "LLM Reranker 2nd stage selection count", "range": [5, 50]},
+    )
 
     @classmethod
     def from_runnable_config(
@@ -89,5 +97,11 @@ class Configuration:
                 configurable.get(
                     "scienceon_default_row_count", defaults.scienceon_default_row_count
                 )
+            ),
+            bm25_top_k=int(
+                configurable.get("bm25_top_k", defaults.bm25_top_k)
+            ),
+            reranker_top_k=int(
+                configurable.get("reranker_top_k", defaults.reranker_top_k)
             ),
         )

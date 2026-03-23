@@ -7,6 +7,7 @@ from agents import (
     meaning_expand_node,
     paper_retrieval_node,
     limitation_extract_node,
+    recency_check_node,
     gap_infer_node,
     critic_score_node,
     final_response_node,
@@ -50,6 +51,7 @@ def build_graph():
     workflow.add_node("meaning_expand", meaning_expand_node)
     workflow.add_node("paper_retrieval", paper_retrieval_node)
     workflow.add_node("limitation_extract", limitation_extract_node)
+    workflow.add_node("recency_check", recency_check_node)
     workflow.add_node("gap_infer", gap_infer_node)
     workflow.add_node("critic_score", critic_score_node)
     workflow.add_node("final_response", final_response_node)
@@ -60,7 +62,8 @@ def build_graph():
     workflow.add_edge("query_subgraph", "meaning_expand")
     workflow.add_edge("meaning_expand", "paper_retrieval")
     workflow.add_edge("paper_retrieval", "limitation_extract")
-    workflow.add_edge("limitation_extract", "gap_infer")
+    workflow.add_edge("limitation_extract", "recency_check")
+    workflow.add_edge("recency_check", "gap_infer")
     workflow.add_edge("gap_infer", "critic_score")
 
     workflow.add_conditional_edges(

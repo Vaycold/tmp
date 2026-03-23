@@ -126,20 +126,25 @@ def arxiv_api_call(search_query: str, max_total: int, page_size: int, max_pages:
         )
 
         last_error = None
-        for _ in range(2):
+        for attempt in range(3):
             try:
                 r = requests.get(url, timeout=30)
+                if r.status_code == 429:
+                    wait = 3 * (attempt + 1)
+                    print(f"  [arxiv] 429 rate limit → {wait}s 대기 후 재시도 ({attempt + 1}/3)")
+                    time.sleep(wait)
+                    continue
                 r.raise_for_status()
                 batch = _parse_atom(r.text)
                 raw.extend(batch)
                 if not batch:
                     return list({p["paper_id"]: p for p in raw}.values())
-                time.sleep(0.3)
+                time.sleep(3)  # arXiv 권장 간격
                 last_error = None
                 break
             except Exception as e:
                 last_error = e
-                time.sleep(0.5)
+                time.sleep(3)
         if last_error:
             raise last_error
 
@@ -348,6 +353,122 @@ def scienceon_search(*, client_id: str, query: str, target: str = "ARTI", cur_pa
     return parsed
 
 
+# =========================== Semantic Scholar ===========================
+_S2_API = "https://api.semanticscholar.org/graph/v1/paper/search/bulk"
+_S2_FIELDS = "paperId,title,abstract,year,authors,url,externalIds"
+
+
+def semantic_scholar_search(query: str, limit: int = 20, year: str = "") -> list[dict]:
+    """Semantic Scholar Academic Graph API로 논문 검색."""
+    params = {
+        "query": query,
+        "limit": min(limit, 100),
+        "fields": _S2_FIELDS,
+    }
+    if year:
+        params["year"] = year  # e.g. "2020-2025" or "2023-"
+
+    papers: list[dict] = []
+    last_error = None
+    for attempt in range(3):
+        try:
+            r = requests.get(_S2_API, params=params, timeout=30)
+            if r.status_code == 429:
+                time.sleep(3 * (attempt + 1))
+                continue
+            r.raise_for_status()
+            data = r.json().get("data", [])[:limit]
+            for p in data:
+                if not p.get("title"):
+                    continue
+                ext_ids = p.get("externalIds") or {}
+                arxiv_id = ext_ids.get("ArXiv", "")
+                doi = ext_ids.get("DOI", "")
+                paper_id = f"arxiv:{arxiv_id}" if arxiv_id else f"s2:{p.get('paperId', '')}"
+                authors = [a.get("name", "") for a in (p.get("authors") or []) if a.get("name")]
+                papers.append({
+                    "paper_id": paper_id,
+                    "title": _norm(p.get("title", "")),
+                    "abstract": _norm(p.get("abstract") or ""),
+                    "url": p.get("url") or "",
+                    "year": p.get("year") or 0,
+                    "authors": authors,
+                    "score_bm25": 0.0,
+                    "source": "semantic_scholar",
+                    "full_text_sections": {},
+                    "doi": doi,
+                })
+            last_error = None
+            break
+        except Exception as e:
+            last_error = e
+            time.sleep(2)
+    if last_error:
+        raise last_error
+    return papers
+
+
+# =========================== OpenAlex ===========================
+_OPENALEX_API = "https://api.openalex.org/works"
+
+
+def openalex_search(query: str, per_page: int = 20) -> list[dict]:
+    """OpenAlex API로 논문 검색. API key 불필요."""
+    params = {
+        "search": query,
+        "per_page": min(per_page, 200),
+        "select": "id,title,publication_year,doi,authorships,abstract_inverted_index",
+    }
+    papers: list[dict] = []
+    r = requests.get(
+        _OPENALEX_API,
+        params=params,
+        headers={"User-Agent": "GAPAGO-Research-Agent/1.0 (mailto:gapago@research.dev)"},
+        timeout=30,
+    )
+    r.raise_for_status()
+    results = r.json().get("results", [])
+    for p in results:
+        title = _norm(p.get("title") or "")
+        if not title:
+            continue
+
+        # abstract 복원 (inverted index → text)
+        abstract = ""
+        inv_idx = p.get("abstract_inverted_index")
+        if inv_idx and isinstance(inv_idx, dict):
+            word_positions = []
+            for word, positions in inv_idx.items():
+                for pos in positions:
+                    word_positions.append((pos, word))
+            word_positions.sort()
+            abstract = " ".join(w for _, w in word_positions)
+
+        doi_url = p.get("doi") or ""
+        doi = doi_url.replace("https://doi.org/", "").replace("http://doi.org/", "") if doi_url else ""
+        openalex_id = (p.get("id") or "").replace("https://openalex.org/", "")
+
+        authors = []
+        for a in (p.get("authorships") or []):
+            name = (a.get("author") or {}).get("display_name", "")
+            if name:
+                authors.append(name)
+
+        papers.append({
+            "paper_id": f"openalex:{openalex_id}",
+            "title": title,
+            "abstract": _norm(abstract),
+            "url": doi_url or f"https://openalex.org/{openalex_id}",
+            "year": p.get("publication_year") or 0,
+            "authors": authors,
+            "score_bm25": 0.0,
+            "source": "openalex",
+            "full_text_sections": {},
+            "doi": doi,
+        })
+    return papers
+
+
 # =========================== Tool APIs ==========================
 class ArxivApiCallInput(BaseModel):
     search_query: str = Field(description="arXiv API search_query")
@@ -358,6 +479,17 @@ class ArxivApiCallInput(BaseModel):
 
 class WebSearchInput(BaseModel):
     query: str = Field(description="웹 검색 쿼리")
+
+
+class SemanticScholarSearchInput(BaseModel):
+    query: str = Field(description="Semantic Scholar 검색 쿼리")
+    limit: int = Field(default=20, description="최대 결과 수 (max 100)")
+    year: str = Field(default="", description="연도 필터 (e.g. '2020-2025', '2023-')")
+
+
+class OpenAlexSearchInput(BaseModel):
+    query: str = Field(description="OpenAlex 검색 쿼리")
+    per_page: int = Field(default=20, description="최대 결과 수 (max 200)")
 
 
 class ScienceOnSearchInput(BaseModel):
@@ -413,6 +545,32 @@ def build_retrieval_tools(config: Optional[RunnableConfig] = None) -> List:
         except Exception as e:
             return f"<Error>Web search failed: {str(e)}</Error>"
 
+    @tool(args_schema=SemanticScholarSearchInput)
+    def semantic_scholar_search_tool(query: str, limit: int = 20, year: str = "") -> str:
+        """Search Semantic Scholar for academic papers. Returns papers with metadata. Good for finding highly-cited and cross-domain papers."""
+        try:
+            results = semantic_scholar_search(query=query, limit=limit, year=year)
+            return json.dumps({
+                "source": "semantic_scholar",
+                "query": query,
+                "results": results,
+            }, ensure_ascii=False)
+        except Exception as e:
+            return f"<Error>Semantic Scholar search failed: {str(e)}</Error>"
+
+    @tool(args_schema=OpenAlexSearchInput)
+    def openalex_search_tool(query: str, per_page: int = 20) -> str:
+        """Search OpenAlex for academic papers. Covers 200M+ works across all disciplines. No API key needed."""
+        try:
+            results = openalex_search(query=query, per_page=per_page)
+            return json.dumps({
+                "source": "openalex",
+                "query": query,
+                "results": results,
+            }, ensure_ascii=False)
+        except Exception as e:
+            return f"<Error>OpenAlex search failed: {str(e)}</Error>"
+
     @tool(args_schema=ScienceOnSearchInput)
     def scienceon_search_tool(query: str, target: str = "ARTI", cur_page: int = 1, row_count: int = 10) -> str:
         """Search ScienceON paper records using the exact openapicall.do format: action=search, target=ARTI, searchQuery={\"BI\":\"...\"}, curPage, rowCount."""
@@ -435,6 +593,8 @@ def build_retrieval_tools(config: Optional[RunnableConfig] = None) -> List:
     return [
         web_search_tool,
         arxiv_api_call_tool,
+        semantic_scholar_search_tool,
+        openalex_search_tool,
         scienceon_search_tool,
     ]
 

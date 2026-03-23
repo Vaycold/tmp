@@ -65,8 +65,18 @@ def print_stream_events_and_capture_interrupt(app, stream_input, config_dict):
     for i, event in enumerate(app.stream(stream_input, config_dict, subgraphs=True)):
         path, update = event
 
-        print(f"\n===== EVENT {i} =====")
-        print("PATH:", " -> ".join(path) if path else "(root)")
+        # subgraph 내부 이벤트는 건너뛰고 root 이벤트만 출력
+        if path:
+            # interrupt 체크는 subgraph에서도 필요
+            for node, values in update.items():
+                if node == "__interrupt__":
+                    interrupted = True
+                # clarify_prompt도 subgraph에서 발생
+                if isinstance(values, dict):
+                    for msg in values.get("messages", []):
+                        if getattr(msg, "name", None) == "clarify_prompt":
+                            latest_clarify_prompt = msg.content
+            continue
 
         for node, values in update.items():
             if node == "__interrupt__":
@@ -74,7 +84,7 @@ def print_stream_events_and_capture_interrupt(app, stream_input, config_dict):
                 print("\n*** INTERRUPT ***")
                 continue
 
-            print(f"\n--- NODE: {node} ---")
+            print(f"\n--- {node} ---")
 
             if not isinstance(values, dict):
                 print(values)
@@ -127,8 +137,10 @@ def save_result(query: str, state_values: dict) -> Path:
  
         # ★ 핵심: gap_infer_node가 state["gaps"]에 저장한 구조화 데이터
         #   repeat_count 내림차순 정렬 상태 그대로 저장
+        "limitations": state_values.get("limitations", []),
         "gaps": state_values.get("gaps", []),
- 
+        "web_results": state_values.get("web_results", []),
+
         "messages": messages_out,
     }
  
@@ -147,15 +159,40 @@ def save_result(query: str, state_values: dict) -> Path:
 def run():
     config_dict = {"configurable": {"thread_id": random_uuid()}, "recursion_limit": 30} # 최대 노드 실행 개수 지정 (순환 로직에 빠지지 않기 위함)
 
+    # --- LLM Provider 선택 ---
+    from llm import select_provider_interactive
+    import os
+    selected_provider = select_provider_interactive()
+    os.environ["LLM_PROVIDER"] = selected_provider
+
+    # lru_cache 초기화 (provider 변경 반영)
+    from llm import get_llm
+    get_llm.cache_clear()
+
+    # --- 연구 도메인 선택 (recency check용) ---
+    print("\n=== 연구 도메인 선택 (최신성 검증 소스 결정) ===")
+    print("  0) auto - LLM이 자동 판단 (기본값)")
+    print("  1) ai_cs - AI / Computer Science")
+    print("  2) biomedical - 바이오 / 의학")
+    print("  3) materials_chemistry - 재료 / 화학")
+    print("  4) physics - 물리")
+    print("  5) general - 범용 (전체 웹)")
+    domain_map = {"0": "auto", "1": "ai_cs", "2": "biomedical",
+                  "3": "materials_chemistry", "4": "physics", "5": "general"}
+    domain_choice = input("\n선택 (기본값: auto) > ").strip()
+    research_domain = domain_map.get(domain_choice, "auto")
+    print(f"  → {research_domain} 선택됨")
+
     # --- 사용자 입력 ---
     default_query = "Domain adaptation"
-    user_input = input("연구 질문을 입력하세요: ").strip() or default_query
+    user_input = input("\n연구 질문을 입력하세요: ").strip() or default_query
     if not user_input:
         user_input = "Domain adaptation in clinical drug"
 
     inputs = {
         "messages": [HumanMessage(content=user_input)],
         "max_iterations": 3,
+        "research_domain": research_domain,
     }
 
     print_divider("[STEP 1] 초기 실행")
@@ -213,13 +250,6 @@ def run():
     print("is_ambiguous =", values.get("is_ambiguous"))
     print("refined_query =", values.get("refined_query"))
 
-    print_divider("[파이프라인 완료]")
-
-    if values.get("messages"):
-        print(values["messages"][-1].content)
-    else:
-        print(values)
-    
     save_result(user_input, values)
 
 if __name__ == "__main__":
