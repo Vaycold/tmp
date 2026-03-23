@@ -7,6 +7,8 @@ from langchain_core.messages import AIMessage, HumanMessage
 from tools import build_role_tools, bm25_rank, _safe_json_loads
 from prompts.system import make_system_prompt
 from llm import get_llm
+from config import Configuration
+from utils.parse_json import parse_json
 
 llm = get_llm()
 
@@ -157,6 +159,88 @@ def _dedupe_papers(raw_papers: list[dict]) -> list[dict]:
     return deduped
 
 
+RERANKER_PROMPT = """You are a research paper relevance assessor for GAP analysis.
+
+Research Query: "{query}"
+
+Below are {n} candidate papers. Select the {top_k} most relevant papers for identifying research gaps, limitations, and future directions.
+
+Prioritize:
+1. Papers directly addressing the research topic (methodology, dataset, application domain match)
+2. Papers with substantive abstracts that likely contain discussable limitations
+3. Diversity of perspectives (different approaches/subfields within the topic)
+4. Recent papers (more likely to have current limitations)
+
+Papers:
+{papers_text}
+
+Return a JSON object:
+{{
+  "selected_indices": [1, 3, 5, ...],
+  "rationale": "Brief explanation of selection strategy"
+}}
+
+IMPORTANT: Return ONLY the JSON object. Select exactly {top_k} papers (or fewer if fewer are truly relevant)."""
+
+
+def _llm_rerank(papers: list[dict], query: str, top_k: int) -> list[dict]:
+    """LLM Reranker: BM25 필터링된 논문에서 GAP 분석에 가장 적합한 논문 선별."""
+    if len(papers) <= top_k:
+        return papers
+
+    papers_text = "\n".join(
+        f"[{i+1}] Title: {p.get('title', '')}\n"
+        f"    Year: {p.get('year', 'N/A')}\n"
+        f"    Abstract: {(p.get('abstract', '') or '')[:300]}\n"
+        for i, p in enumerate(papers)
+    )
+
+    prompt = RERANKER_PROMPT.format(
+        query=query,
+        n=len(papers),
+        top_k=top_k,
+        papers_text=papers_text,
+    )
+
+    try:
+        llm = get_llm()
+        response = llm.invoke([HumanMessage(content=prompt)])
+        content = response.content if hasattr(response, "content") else str(response)
+        parsed = parse_json(content)
+
+        if not isinstance(parsed, dict) or "selected_indices" not in parsed:
+            print(f"  [WARN] LLM Reranker 파싱 실패 → BM25 top-{top_k} fallback")
+            return papers[:top_k]
+
+        indices = parsed["selected_indices"]
+        # 유효한 인덱스만 필터 (1-indexed → 0-indexed)
+        seen = set()
+        selected = []
+        for idx in indices:
+            try:
+                idx = int(idx)
+            except (ValueError, TypeError):
+                continue
+            if idx < 1 or idx > len(papers) or idx in seen:
+                continue
+            seen.add(idx)
+            selected.append(papers[idx - 1])
+            if len(selected) >= top_k:
+                break
+
+        if not selected:
+            print(f"  [WARN] LLM Reranker 유효 결과 없음 → BM25 top-{top_k} fallback")
+            return papers[:top_k]
+
+        rationale = parsed.get("rationale", "")
+        print(f"  [reranker] {len(papers)}편 → {len(selected)}편 선별 ({rationale[:80]})")
+        return selected
+
+    except Exception as e:
+        print(f"  [WARN] LLM Reranker 실패: {e} → BM25 top-{top_k} fallback")
+        return papers[:top_k]
+
+
 def paper_retrieval_node(state: AgentState) -> AgentState:
     messages = state.get("messages", [])
     print(f"  [DEBUG] 전체 messages 수: {len(messages)}")
@@ -202,11 +286,18 @@ def paper_retrieval_node(state: AgentState) -> AgentState:
     raw_papers = _dedupe_papers(raw_papers)
     print(f"  [DEBUG] raw_papers count (after dedup): {len(raw_papers)}")
 
-    # ✅ BM25 랭킹
+    # ✅ BM25 1차 필터 (넓게)
+    cfg = Configuration()
     query = state.get("refined_query") or state.get("user_question", "")
     if raw_papers and query:
-        ranked = bm25_rank(raw_papers, query, top_k=10)
+        ranked = bm25_rank(raw_papers, query, top_k=cfg.bm25_top_k)
         raw_papers = ranked.get("selected", raw_papers)
+    print(f"  [DEBUG] BM25 1st stage: {len(raw_papers)} papers")
+
+    # ✅ LLM Reranker 2차 선별 (정밀)
+    if raw_papers and query and len(raw_papers) > cfg.reranker_top_k:
+        raw_papers = _llm_rerank(raw_papers, query, top_k=cfg.reranker_top_k)
+    print(f"  [DEBUG] LLM Reranker 2nd stage: {len(raw_papers)} papers")
 
     # ✅ Paper 객체로 변환
     papers = []
