@@ -208,6 +208,12 @@ class AgentState(TypedDict):
     limitations: List[dict]
 
     # ==================================================================
+    # -3.5- LIMITATION EVAL AGENT
+    limitation_eval: dict           # 평가 상세 결과 (call1/call2/decision)
+    eval_warnings: List[str]        # 평가 경고 메시지
+    eval_retry_count: int           # 평가 RETRY 횟수
+
+    # ==================================================================
     # -4- GAP INFER AGENT
     gaps: List[dict]
 

@@ -381,6 +381,69 @@ Output ONLY the JSON list. No explanation before or after.
 
 
 # =====================================================================
+# Limitation 중복 제거
+# =====================================================================
+_STOP_WORDS = frozenset({
+    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "can", "shall", "of", "in", "to", "for",
+    "with", "on", "at", "by", "from", "as", "into", "through", "during",
+    "and", "or", "but", "not", "no", "nor", "so", "yet", "both", "either",
+    "it", "its", "this", "that", "these", "those", "their", "our", "we",
+    "they", "he", "she", "which", "who", "whom", "what", "where", "when",
+    "how", "all", "each", "every", "any", "such", "than", "too", "very",
+    "also", "only", "just", "more", "most", "other", "some", "about",
+})
+
+
+def _tokenize_claim(claim: str) -> set[str]:
+    """claim을 소문자 토큰 집합으로 변환 (불용어 제거)."""
+    tokens = set(re.sub(r"[^\w\s]", "", claim.lower()).split())
+    return tokens - _STOP_WORDS
+
+
+def _jaccard_similarity(a: set[str], b: set[str]) -> float:
+    """두 토큰 집합의 Jaccard 유사도."""
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def _dedupe_limitations(limitations: list[dict], threshold: float = 0.55) -> list[dict]:
+    """
+    Limitation 중복 제거.
+    1) 같은 paper 내: claim Jaccard >= threshold → 첫 번째만 유지
+    2) 다른 paper 간: claim Jaccard >= threshold → 첫 번째만 유지
+    evidence_quote가 더 긴 쪽을 우선 유지.
+    """
+    if not limitations:
+        return []
+
+    # evidence_quote 길이 내림차순 정렬 (더 근거가 풍부한 것 우선)
+    sorted_lims = sorted(limitations, key=lambda x: len(x.get("evidence_quote", "")), reverse=True)
+
+    kept: list[dict] = []
+    kept_tokens: list[set[str]] = []
+
+    for lim in sorted_lims:
+        tokens = _tokenize_claim(lim.get("claim", ""))
+        if not tokens:
+            continue
+
+        is_dup = False
+        for existing_tokens in kept_tokens:
+            if _jaccard_similarity(tokens, existing_tokens) >= threshold:
+                is_dup = True
+                break
+
+        if not is_dup:
+            kept.append(lim)
+            kept_tokens.append(tokens)
+
+    return kept
+
+
+# =====================================================================
 # limitation_extract_node
 # =====================================================================
 def limitation_extract_node(state: AgentState) -> AgentState:
@@ -515,13 +578,20 @@ def limitation_extract_node(state: AgentState) -> AgentState:
     if llm_fail_count:
         errors.append(f"[limitation_extract] LLM call failed for {llm_fail_count}/{len(papers)} papers")
 
+    # 중복 제거
+    before_dedup = len(all_limitations)
+    all_limitations = _dedupe_limitations(all_limitations)
+    dedup_removed = before_dedup - len(all_limitations)
+    if dedup_removed:
+        print(f"  [dedup] {before_dedup} → {len(all_limitations)} ({dedup_removed}개 중복 제거)")
+
     # 최종 summary 메시지
     summary = AIMessage(
-        content=f"Extracted {len(all_limitations)} limitations from {len(papers)} papers.",
+        content=f"Extracted {len(all_limitations)} limitations from {len(papers)} papers (deduplicated from {before_dedup}).",
         name="limitation_extract",
     )
 
-    print(f"\n  ✅ [limitation] 총 {len(all_limitations)}개 추출 완료")
+    print(f"\n  ✅ [limitation] 총 {len(all_limitations)}개 추출 완료 (중복 제거 {dedup_removed}개)")
 
     return {
         "messages": [summary],

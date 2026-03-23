@@ -7,11 +7,28 @@ from agents import (
     meaning_expand_node,
     paper_retrieval_node,
     limitation_extract_node,
+    limitation_eval_node,
     recency_check_node,
     gap_infer_node,
     critic_score_node,
     final_response_node,
 )
+
+
+def route_after_eval(state: AgentState) -> str:
+    """
+    limitation_eval →
+      - PASS  → recency_check (계속 진행)
+      - RETRY → limitation_extract (재추출)
+    """
+    eval_result = state.get("limitation_eval", {})
+    decision = eval_result.get("decision", "PASS")
+
+    if decision == "RETRY":
+        print("  [graph] limitation_eval → RETRY → limitation_extract")
+        return "limitation_extract"
+
+    return "recency_check"
 
 
 def route_after_critic(state: AgentState) -> str:
@@ -51,6 +68,7 @@ def build_graph():
     workflow.add_node("meaning_expand", meaning_expand_node)
     workflow.add_node("paper_retrieval", paper_retrieval_node)
     workflow.add_node("limitation_extract", limitation_extract_node)
+    workflow.add_node("limitation_eval", limitation_eval_node)
     workflow.add_node("recency_check", recency_check_node)
     workflow.add_node("gap_infer", gap_infer_node)
     workflow.add_node("critic_score", critic_score_node)
@@ -62,7 +80,18 @@ def build_graph():
     workflow.add_edge("query_subgraph", "meaning_expand")
     workflow.add_edge("meaning_expand", "paper_retrieval")
     workflow.add_edge("paper_retrieval", "limitation_extract")
-    workflow.add_edge("limitation_extract", "recency_check")
+    workflow.add_edge("limitation_extract", "limitation_eval")
+
+    # limitation_eval → PASS: recency_check, RETRY: limitation_extract
+    workflow.add_conditional_edges(
+        "limitation_eval",
+        route_after_eval,
+        {
+            "recency_check": "recency_check",
+            "limitation_extract": "limitation_extract",
+        },
+    )
+
     workflow.add_edge("recency_check", "gap_infer")
     workflow.add_edge("gap_infer", "critic_score")
 
