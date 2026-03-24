@@ -1078,7 +1078,7 @@ def main():
 
     print("  " + "-" * (50 + 10 * len(baseline_evals)))
     bl_totals = "  ".join(f"{be['total_score']:>8.4f}" for be in baseline_evals)
-    print(f"  {'TOTAL'::<20} {gapago_eval['total_score']:>8.4f}  {bl_totals}")
+    print(f"  {'TOTAL':<20} {gapago_eval['total_score']:>8.4f}  {bl_totals}")
 
     # ── 저장 ─────────────────────────────────────────────────────────
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
